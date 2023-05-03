@@ -6,7 +6,7 @@ import path from 'path';
 
 import {YoutubeToken, ResourcePath, SongRankPath, SongRankPrefix} from './Token.json';
 
-const DBEUGMODE = true;
+const DBEUGMODE = false;
 
 const gYoutubeLink = "https://www.youtube.com/watch";
 const gYoutubeLinkVideoIDKeyword = "v";

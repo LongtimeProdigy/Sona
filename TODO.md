@@ -1,3 +1,8 @@
+## 중요! 소나 처음 설치 순서
+1. ffmpeg 설치
+2. Ubuntu- NodeJS, NPM 설치 (PPA 이용)
+3. src/Token.json 생성 및 입력 (내용 요청 할 것)
+
 ## ~~~PlaySong시에 메세지 보내기~~~
 
 
