@@ -130,7 +130,7 @@ dist
 .pnp.*
 
 # Token
-src/token.json
+*.json
 
 # Resource
 Resource/

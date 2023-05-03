@@ -2,7 +2,7 @@
 import DiscordJS from 'discord.js';
 
 import {Message, MusicPlayer} from "./MusicPlayer"
-import {CommandPrefix, DiscordToken} from './token.json';
+import {CommandPrefix, DiscordToken} from './Token.json';
 
 const DBEUGMODE = false;
 

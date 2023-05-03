@@ -4,7 +4,7 @@ import { Readable } from 'stream';
 import fs from 'fs';
 import path from 'path';
 
-import {YoutubeToken, ResourcePath, SongRankPath, SongRankPrefix} from './token.json';
+import {YoutubeToken, ResourcePath, SongRankPath, SongRankPrefix} from './Token.json';
 
 const DBEUGMODE = true;
 
