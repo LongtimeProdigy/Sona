@@ -1,12 +1,14 @@
 import DiscordJS from 'discord.js';
-import {joinVoiceChannel, createAudioPlayer, createAudioResource, VoiceConnection, AudioPlayerStatus, AudioPlayerState, AudioPlayer} from '@discordjs/voice';
+import {joinVoiceChannel, createAudioPlayer, createAudioResource, VoiceConnection, AudioPlayerStatus, AudioPlayerState, AudioPlayer, VoiceConnectionStatus} from '@discordjs/voice';
 import { Readable } from 'stream';
 import fs from 'fs';
 import path from 'path';
 
+import Logger from './Logger'
 import {YoutubeToken, ResourcePath, SongRankPath, SongRankPrefix} from './Token.json';
+import { VoiceConnectionDisconnectedOtherState } from '@discordjs/voice';
 
-const DBEUGMODE = false;
+const DBEUGMODE = true;
 
 const gYoutubeLink = "https://www.youtube.com/watch";
 const gYoutubeLinkVideoIDKeyword = "v";
@@ -186,7 +188,7 @@ class YoutubeHelper
         let songInformationArr: Array<SongInformation> = [];
         if((idArr.length != durationArr.length) || (titleArr.length != durationArr.length))
         {
-            console.error("ID와 Duration의 개수가 다릅니다. ", idArr.length, " / ", durationArr.length);
+            Logger.error("ID와 Duration의 개수가 다릅니다. ", idArr.length, " / ", durationArr.length);
             return songInformationArr;
         }
 
@@ -391,7 +393,7 @@ export class MusicPlayer
         this._songRankInformationMap = new Map(Object.entries(loadObj));
 
         this._songRankSaveInterval = setInterval(() => {
-            console.log("--- Save Song Rank Information ---");
+            Logger.logDev("--- Save Song Rank Information ---");
             let sentence = Object.fromEntries(this._songRankInformationMap);
             fs.writeFileSync(rankFilePath, JSON.stringify(sentence));
         }, 1000 * gSongRankSaveIntervalSecond);
@@ -477,10 +479,11 @@ export class MusicPlayer
             }
             break;
             default:
-                console.error(`비정상적 PlayCommandType${PlayCommandType}입니다. 개발자에게 알려주세요.`);
+                Logger.error(`비정상적 PlayCommandType${PlayCommandType}입니다. 개발자에게 알려주세요.`);
             return;
         }
         
+        console.log(this._currentPlayingSongInformation);
         if(this._currentPlayingSongInformation == undefined)
             this.playSong();
     }
@@ -647,11 +650,15 @@ export class MusicPlayer
 
     async test(message: Message)
     {
-        console.log(this._songHistory);
+        Logger.logDev(this._songHistory);
+        Logger.logDev(JSON.stringify(this._songList, null, '  '));
+        Logger.logDev(JSON.stringify(this._currentPlayingSongInformation, null, '  '));
     }
 
     private async playSong()
     {
+        Logger.logDev("--- Play Song ---");
+
         this._currentPlayingSongInformation = this._songList.shift();
         if(this._currentPlayingSongInformation == undefined)
         {
@@ -664,19 +671,48 @@ export class MusicPlayer
 
         if(this._connection == undefined)
         {
+            Logger.logDev("--- Create Connection ---");
             this._connection = joinVoiceChannel({
                 channelId: this._currentPlayingSongInformation!._voiceChannelID, 
                 guildId: this._currentPlayingSongInformation!._guildeID, 
                 adapterCreator: this._currentPlayingSongInformation!._adapterCreator
             });
+
+            this._connection.on("error", error => {
+                Logger.logDev("--- CN Error ---\n", error);
+            })
+            .on(VoiceConnectionStatus.Ready, () => {
+                Logger.logDev("--- CN Ready ---");
+            })
+            .on(VoiceConnectionStatus.Connecting, () => {
+                Logger.logDev("--- CN Connecting ---");
+            })
+            .on(VoiceConnectionStatus.Signalling, () => {
+                Logger.logDev("--- CN Signaling ---");
+            })
+            .on(VoiceConnectionStatus.Disconnected, () => {
+                Logger.logDev("--- CN Disconnected ---");
+                this.disconnect();
+            })
+            .on(VoiceConnectionStatus.Destroyed, () => {
+                Logger.logDev("--- CN Destroyed ---");
+            });
+
+            if(process.env.NODE_ENV !== 'production')
+            {
+                this._connection.on("debug", message =>{
+                    Logger.logDev("--- CN Debug ---\n", message);
+                });
+            }
         }
 
         if(this._player == undefined)
         {
+            Logger.logDev("--- Create AudioPlayer ---");
+
             this._player = createAudioPlayer();
             this._player.on('error', error => {
-                if(DBEUGMODE)
-                    console.log('--- MP Error ---\n', error);
+                Logger.logDev('--- MP Error ---\n', error);
 
                 this.playSong();
             })
@@ -702,10 +738,10 @@ export class MusicPlayer
                 }
             });
 
-            if(DBEUGMODE)
+            if(process.env.NODE_ENV !== 'production')
             {
                 this._player.on('debug', message => {
-                    console.log("--- MP Debug ---\n", message);
+                    Logger.logDev("--- MP Debug ---\n", message);
                 })
             }
         }
@@ -731,14 +767,12 @@ export class MusicPlayer
                 const html = await (await fetch(`${gYoutubeLink}?${gYoutubeLinkVideoIDKeyword}=Za9pOxEGqWU`)).text();
                 const matches = html.match(/ytInitialPlayerResponse\s*=\s*({.+?})\s*;\s*(?:var\s+meta|<\/script|\n)/);
                 const json = JSON.parse(matches![1]);
-                console.log(JSON.stringify(json, null, 4));
-                console.log(json.streamingData.formats);
                 if('url' in json.streamingData.formats)
-                    console.log('url: ', json.streamingData.formats.url);
+                    Logger.logDev('url: ', json.streamingData.formats.url);
                 else if('signatureCipher' in json.streamingData.formats)
-                    console.log('signatureCipher: ', json.streamingData.formats.signatureCipher);
+                    Logger.logDev('signatureCipher: ', json.streamingData.formats.signatureCipher);
                 else
-                    console.log('There is no sourceURL!');
+                    Logger.logDev('There is no sourceURL!');
 
                 // function decipher(a: any) {
                 //     var b = {
@@ -782,6 +816,8 @@ export class MusicPlayer
 
     private disconnect()
     {
+        this._currentPlayingSongInformation = undefined;
+        
         this._player?.stop();
         this._player = undefined;
         this._connection?.disconnect();

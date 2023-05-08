@@ -1,10 +1,9 @@
 // https://discordjs.guide/
 import DiscordJS from 'discord.js';
 
+import Logger from './Logger'
 import {Message, MusicPlayer} from "./MusicPlayer"
 import {CommandPrefix, DiscordToken} from './Token.json';
-
-const DBEUGMODE = false;
 
 class DiscordSession
 {
@@ -60,7 +59,7 @@ export default class Sona
                 return;
 
             await this._client.application.commands.set(this._commandArr);
-            console.log(`${this._client.user.username} is online`);
+            Logger.log(`${this._client.user.username} is online`);
         });
 
         this._client.on(DiscordJS.Events.InteractionCreate, async (interaction: DiscordJS.Interaction) => {
@@ -72,8 +71,7 @@ export default class Sona
             if(message.author.bot == true)
                 return;
             
-            if(DBEUGMODE)
-                console.log("--- messageCreate ---\n", message);
+            Logger.logDev("--- messageCreate ---\n", message);
 
             if(message.content.startsWith(CommandPrefix) == true)
             {
@@ -135,7 +133,7 @@ export default class Sona
             }
         });
         
-        if(DBEUGMODE)
+        if(process.env.NODE_ENV !== 'production')
         {
             this._client.on("messageUpdate", (oldMessage, newMessage) => {
                 if(oldMessage.author!.bot == true)
@@ -143,11 +141,11 @@ export default class Sona
                 else if(newMessage.author!.bot == true)
                     return;
     
-                console.log("--- MessageUpdate ---\n", oldMessage, newMessage);
+                Logger.logDev("--- MessageUpdate ---\n", oldMessage, newMessage);
             });
 
             this._client.on("debug", message =>{
-                console.log("--- debug ---\n", message);
+                Logger.logDev("--- debug ---\n", message);
             });
         }
 
