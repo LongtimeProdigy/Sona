@@ -82,6 +82,7 @@ export default class Sona
                     LIST, 
                     RANDOM, 
                     RANK,
+                    AUTORANDOMMODE, 
                     TEST,  
                     COUNT, 
                 }
@@ -97,6 +98,8 @@ export default class Sona
                         return CommandType.RANDOM;
                     else if(message.content.startsWith(`${CommandPrefix}r`) || message.content.startsWith(`${CommandPrefix}R`) || message.content.startsWith(`${CommandPrefix}ㄱ`))
                         return CommandType.RANK;
+                    else if(message.content.startsWith(`${CommandPrefix}AutoRandomMode`))
+                        return CommandType.AUTORANDOMMODE;
                     else if(message.content.startsWith(`${CommandPrefix}test`))
                         return CommandType.TEST;
                     else
@@ -117,10 +120,13 @@ export default class Sona
                         session._musicPlayer.listSong(newMessage);
                     break;
                     case CommandType.RANDOM:
-                        session._musicPlayer.randomSong(newMessage);
+                        session._musicPlayer.randomSong(newMessage, 5);
                     break;
                     case CommandType.RANK:
                         session._musicPlayer.rankSong(newMessage);
+                    break;
+                    case CommandType.AUTORANDOMMODE:
+                        session._musicPlayer.autoRandomPlay(newMessage);
                     break;
                     case CommandType.TEST:
                         session._musicPlayer.test(newMessage);
@@ -214,7 +220,7 @@ export default class Sona
             }, 
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
-                session._musicPlayer.randomSong(new Message(interaction));
+                session._musicPlayer.randomSong(new Message(interaction), 5);
             }
         }
         const RankSong: Command = {
@@ -229,8 +235,20 @@ export default class Sona
                 session._musicPlayer.rankSong(new Message(interaction));
             }
         }
+        const AutoRandomPlay: Command = {
+            name: "a",
+            description: "소나가 재생할 목록이 없으면 랜덤으로 노래를 재생합니다.",
+            nameLocalizations: {
+                "en-US": "a", 
+                "ko": "ㅁ", 
+            }, 
+            run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
+                await interaction.deferReply();
+                session._musicPlayer.autoRandomPlay(new Message(interaction));
+            }
+        }
 
-        this._commandArr = [PlaySong, SkipSong, ListSong, RandomSong, RankSong];
+        this._commandArr = [PlaySong, SkipSong, ListSong, RandomSong, RankSong, AutoRandomPlay];
     }
 
     async handleSlashCommand(client: DiscordJS.Client, interaction: DiscordJS.CommandInteraction): Promise<void>

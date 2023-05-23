@@ -357,6 +357,7 @@ export class Message
 export class MusicPlayer
 {
     _guildID: string;
+    _autoRandomPlay: boolean;
 
     _songHistory: MaxQueue<string>;
     _searchMap: Map<string, SearchInformation>;
@@ -372,10 +373,11 @@ export class MusicPlayer
     constructor(guildID: string)
     {
         this._guildID = guildID;
+        this._autoRandomPlay = false;
 
         this._songHistory = new MaxQueue(50);
         this._searchMap = new Map<string, SearchInformation>();
-        this._songList = [];
+        this._songList = new Array<SongPlayInformation>;
         this._connection = undefined;
         this._player = undefined;
         this._disconnectionTimer = undefined;
@@ -426,7 +428,7 @@ export class MusicPlayer
 
                 let sentence = `${content} 검색결과\n`;
                 for(let i = 0; i < songInfoArr.length; ++i)
-                    sentence += i + '. ' + songInfoArr[i]._title + ' (' + songInfoArr[i]._duration + ")\n"
+                    sentence += `${i}. ${songInfoArr[i]._title}(${songInfoArr[i]._duration})\n`;
 
                 let reply = await message.reply(sentence, false);
                 this._searchMap.set(message.getUserID(), new SearchInformation(songInfoArr, reply));
@@ -483,14 +485,14 @@ export class MusicPlayer
             return;
         }
         
-        console.log(this._currentPlayingSongInformation);
+        // 현재 노래 재생중이 아니라면 자동으로 노래 하나를 재생합니다.
         if(this._currentPlayingSongInformation == undefined)
-            this.playSong();
+            this.nextSong();
     }
 
     async skipSong()
     {
-        this.playSong();    // 내부에서 자동으로 재생중인 곡은 넘어감
+        this.nextSong();    // 내부에서 자동으로 재생중인 곡은 넘어감
     }
 
     async listSong(message: Message)
@@ -520,19 +522,24 @@ export class MusicPlayer
         }
     }
 
-    async randomSong(message: Message)
+    async randomSong(message: Message | SongPlayInformation, count: number)
     {
-        const voiceChannel = message.getVoiceChannel();
-        if(this.checkVoiceChannel(voiceChannel) == false)
-        {
-            await message.reply("먼저 VoiceChannel에 입장해주세요.", true);
-            return;
-        }
+        Logger.logDev("--- Random Song ---");
 
-        if(this._songRankInformationMap.size == 0)
+        const voiceChannel = message instanceof Message ? message.getVoiceChannel() : undefined;
+        if(message instanceof Message)
         {
-            await message.reply("노래 랭킹이 없습니다. 음악을 들어주세요.", true);
-            return;
+            if(this.checkVoiceChannel(voiceChannel!) == false)
+            {
+                await message.reply("먼저 VoiceChannel에 입장해주세요.", true);
+                return;
+            }
+    
+            if(this._songRankInformationMap.size == 0)
+            {
+                await message.reply("노래 랭킹이 없습니다. 음악을 들어주세요.", true);
+                return;
+            }
         }
 
         let videoIDArr = Array.from(this._songRankInformationMap.keys());
@@ -559,7 +566,7 @@ export class MusicPlayer
         }
         shuffle(percentageArr);
 
-        let maxCount = Math.min(videoIDArr.length, 5);
+        let maxCount = Math.min(videoIDArr.length, count);
         let randomVedioIDArr = Array<string>();
         let limitLoopCount = 1000;
         for(let i = 0; i < maxCount && i < limitLoopCount; ++i, ++limitLoopCount)
@@ -600,13 +607,17 @@ export class MusicPlayer
         for(let i = 0; i < randomVedioIDArr.length; ++i)
         {
             const songInfo = new SongInformation(randomVedioIDArr[i], titleArr[i], durationArr[i]);
-            this._songList.push(new SongPlayInformation(songInfo, voiceChannel!.id, message.getTextChannel(), message.getGuildID(), message.getVoiceAdapterCreator()));
+            if(message instanceof Message)
+                this._songList.push(new SongPlayInformation(songInfo, voiceChannel!.id, message.getTextChannel(), message.getGuildID(), message.getVoiceAdapterCreator()));
+            else
+                this._songList.push(new SongPlayInformation(songInfo, message._voiceChannelID, message._textChannel, message._guildeID, message._adapterCreator));
         }
 
-        await message.reply(`${randomVedioIDArr.length}개의 랜덤 노래가 추가되었습니다.`, true);
+        if(message instanceof Message)
+            await message.reply(`${randomVedioIDArr.length}개의 랜덤 노래가 추가되었습니다.`, true);
 
         if(this._currentPlayingSongInformation == undefined)
-            this.playSong();
+            this.nextSong();
     }
 
     async rankSong(message: Message)
@@ -648,6 +659,15 @@ export class MusicPlayer
         message.reply(sentence, true);
     }
 
+    async autoRandomPlay(message: Message)
+    {
+        this._autoRandomPlay = !this._autoRandomPlay;
+        if(this._autoRandomPlay)
+            message.reply("자동재생 모드로 변경되었습니다.", true);
+        else
+            message.reply("일반재생 모드로 변경되었습니다.", true);
+    }
+
     async test(message: Message)
     {
         Logger.logDev(this._songHistory);
@@ -659,7 +679,6 @@ export class MusicPlayer
     {
         Logger.logDev("--- Play Song ---");
 
-        this._currentPlayingSongInformation = this._songList.shift();
         if(this._currentPlayingSongInformation == undefined)
         {
             this._player?.stop();
@@ -714,7 +733,9 @@ export class MusicPlayer
             this._player.on('error', error => {
                 Logger.logDev('--- MP Error ---\n', error);
 
+                // 오류가 났다면 현재 재생중인 곡을 다시 재생합니다.
                 this.playSong();
+                this._currentPlayingSongInformation!._textChannel.send(`${this._currentPlayingSongInformation!._songInformation._title}(${this._currentPlayingSongInformation!._songInformation._duration}) 재생 오류로 다시 재생합니다.`);
             })
             .on(AudioPlayerStatus.Idle, (oldState: AudioPlayerState, newState: AudioPlayerState) => {
                 if(oldState.status == AudioPlayerStatus.Playing && newState.status == AudioPlayerStatus.Idle)
@@ -734,7 +755,7 @@ export class MusicPlayer
 
                     this._songHistory.enqueue(id);
                     
-                    this.playSong();
+                    this.nextSong();
                 }
             });
 
@@ -745,8 +766,6 @@ export class MusicPlayer
                 })
             }
         }
-        else
-            this._player.stop();
 
         async function createAudioStream(info: SongPlayInformation)
         {
@@ -814,9 +833,37 @@ export class MusicPlayer
         this._currentPlayingSongInformation._textChannel.send(`${this._currentPlayingSongInformation._songInformation._title}(${this._currentPlayingSongInformation._songInformation._duration}) 노래를 재생합니다.`);
     }
 
+    private async nextSong()
+    {
+        Logger.logDev("--- Next Song ---");
+
+        // 재생 중인 노래가 있다면 노래 끊기
+        if(this._currentPlayingSongInformation != undefined)
+            this._player?.stop();
+
+        // 재생할 다음 곡이 없으면 그대로 disconnection 예약
+        if(this._songList.length == 0)
+        {
+            if(this._autoRandomPlay == false)
+            {
+                this._disconnectionTimer = setTimeout(() => {this.disconnect()}, 1000 * gDisconnectTimeoutSecond);
+                return;
+            }
+            else
+            {
+                this.randomSong(this._currentPlayingSongInformation!, 1);
+                this._currentPlayingSongInformation!._textChannel.send(`${this._currentPlayingSongInformation!._songInformation._title}(${this._currentPlayingSongInformation!._songInformation._duration}) 노래를 재생합니다.`);
+            }
+        }
+
+        this._currentPlayingSongInformation = this._songList.shift();
+        this.playSong();
+    }
+
     private disconnect()
     {
         this._currentPlayingSongInformation = undefined;
+        this._songList = new Array<SongPlayInformation>();
         
         this._player?.stop();
         this._player = undefined;
