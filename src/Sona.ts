@@ -248,7 +248,7 @@ export default class Sona
             }
         }
 
-        this._commandArr = [PlaySong, SkipSong, ListSong, RandomSong, RankSong, AutoRandomPlay];
+        this._commandArr = [PlaySong, SkipSong, ListSong, RandomSong, RankSong];
     }
 
     async handleSlashCommand(client: DiscordJS.Client, interaction: DiscordJS.CommandInteraction): Promise<void>
