@@ -94,6 +94,8 @@ class SongPlayInformation
     _guildeID: DiscordJS.Snowflake;
     _adapterCreator: DiscordJS.InternalDiscordGatewayAdapterCreator;
 
+    _errorCount: number;
+
     constructor(songInfo: SongInformation, voiceChannelID: DiscordJS.Snowflake, textChannel: DiscordJS.TextBasedChannel, guildID: DiscordJS.Snowflake, creator: DiscordJS.InternalDiscordGatewayAdapterCreator)
     {
         this._songInformation = songInfo;
@@ -101,6 +103,8 @@ class SongPlayInformation
         this._textChannel = textChannel;
         this._guildeID = guildID;
         this._adapterCreator = creator;
+
+        this._errorCount = 0;
     }
 }
 
@@ -428,8 +432,9 @@ export class MusicPlayer
 
                 let sentence = `${content} 검색결과\n`;
                 for(let i = 0; i < songInfoArr.length; ++i)
-                    sentence += `${i}. ${songInfoArr[i]._title}(${songInfoArr[i]._duration})\n`;
+                    sentence += `${i + 1}. ${songInfoArr[i]._title}(${songInfoArr[i]._duration})\n`;
 
+                console.log(sentence);
                 let reply = await message.reply(sentence, false);
                 this._searchMap.set(message.getUserID(), new SearchInformation(songInfoArr, reply));
             }
@@ -445,7 +450,13 @@ export class MusicPlayer
                 }
                 this._searchMap.delete(userID);
 
-                const songIndex = Number(content);
+                const songIndex = Number(content) - 1;
+                if(songIndex < 0 || songIndex >= searchInfo._songInformationArr.length)
+                {
+                    await message.reply("올바른 Index를 입력해주세요. 0보다 작거나 검색범위 밖입니다.", false);
+                    return;
+                }
+
                 this._songList.push(new SongPlayInformation(searchInfo._songInformationArr[songIndex], voiceChannel!.id, message.getTextChannel(), message.getGuildID(), message.getVoiceAdapterCreator()));
                 await message.reply(`${searchInfo._songInformationArr[songIndex]._title}(${searchInfo._songInformationArr[songIndex]._duration}) 노래가 추가되었습니다.`, true);
                 await searchInfo._message.delete();
@@ -733,7 +744,14 @@ export class MusicPlayer
             this._player.on('error', error => {
                 Logger.logDev('--- MP Error ---\n', error);
 
+                if(this._currentPlayingSongInformation!._errorCount >= 5)
+                {
+                    this.nextSong();
+                    return;
+                }
+
                 // 오류가 났다면 현재 재생중인 곡을 다시 재생합니다.
+                ++this._currentPlayingSongInformation!._errorCount;
                 this.playSong();
                 this._currentPlayingSongInformation!._textChannel.send(`${this._currentPlayingSongInformation!._songInformation._title}(${this._currentPlayingSongInformation!._songInformation._duration}) 재생 오류로 다시 재생합니다.`);
             })
@@ -852,7 +870,7 @@ export class MusicPlayer
             else
             {
                 this.randomSong(this._currentPlayingSongInformation!, 1);
-                this._currentPlayingSongInformation!._textChannel.send(`${this._currentPlayingSongInformation!._songInformation._title}(${this._currentPlayingSongInformation!._songInformation._duration}) 노래를 재생합니다.`);
+                //this._currentPlayingSongInformation!._textChannel.send(`${this._currentPlayingSongInformation!._songInformation._title}(${this._currentPlayingSongInformation!._songInformation._duration}) 노래를 재생합니다.`);
             }
         }
 
