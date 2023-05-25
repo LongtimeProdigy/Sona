@@ -114,22 +114,22 @@ export default class Sona
                         session._musicPlayer.playCommand(new Message(message));
                     break;
                     case CommandType.SKIP:
-                        session._musicPlayer.skipSong();
+                        session._musicPlayer.skipSongCommand();
                     break;
                     case CommandType.LIST:
-                        session._musicPlayer.listSong(newMessage);
+                        session._musicPlayer.listSongCommand(newMessage);
                     break;
                     case CommandType.RANDOM:
-                        session._musicPlayer.randomSong(newMessage, 5);
+                        session._musicPlayer.randomSongCommand(newMessage, 5);
                     break;
                     case CommandType.RANK:
-                        session._musicPlayer.rankSong(newMessage);
+                        session._musicPlayer.rankSongCommand(newMessage);
                     break;
                     case CommandType.AUTORANDOMMODE:
-                        session._musicPlayer.autoRandomPlay(newMessage);
+                        session._musicPlayer.autoRandomPlayCommand(newMessage);
                     break;
                     case CommandType.TEST:
-                        session._musicPlayer.test(newMessage);
+                        session._musicPlayer.testCommand(newMessage);
                     break;
                     case CommandType.COUNT:
                     default:
@@ -196,7 +196,7 @@ export default class Sona
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
                 await interaction.followUp({content: "현재 노래를 스킵합니다."});
-                session._musicPlayer.skipSong();
+                session._musicPlayer.skipSongCommand();
             }
         };
         const ListSong: Command = {
@@ -208,7 +208,7 @@ export default class Sona
             }, 
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
-                session._musicPlayer.listSong(new Message(interaction));
+                session._musicPlayer.listSongCommand(new Message(interaction));
             }
         }
         const RandomSong: Command = {
@@ -220,7 +220,7 @@ export default class Sona
             }, 
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
-                session._musicPlayer.randomSong(new Message(interaction), 5);
+                session._musicPlayer.randomSongCommand(new Message(interaction), 5);
             }
         }
         const RankSong: Command = {
@@ -232,10 +232,10 @@ export default class Sona
             }, 
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
-                session._musicPlayer.rankSong(new Message(interaction));
+                session._musicPlayer.rankSongCommand(new Message(interaction));
             }
         }
-        const AutoRandomPlay: Command = {
+        const AutoRandomMode: Command = {
             name: "a",
             description: "소나가 재생할 목록이 없으면 랜덤으로 노래를 재생합니다.",
             nameLocalizations: {
@@ -244,11 +244,11 @@ export default class Sona
             }, 
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
-                session._musicPlayer.autoRandomPlay(new Message(interaction));
+                session._musicPlayer.autoRandomPlayCommand(new Message(interaction));
             }
         }
 
-        this._commandArr = [PlaySong, SkipSong, ListSong, RandomSong, RankSong];
+        this._commandArr = [PlaySong, SkipSong, ListSong, RandomSong, RankSong, AutoRandomMode];
     }
 
     async handleSlashCommand(client: DiscordJS.Client, interaction: DiscordJS.CommandInteraction): Promise<void>

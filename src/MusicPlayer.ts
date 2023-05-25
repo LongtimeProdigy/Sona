@@ -434,7 +434,6 @@ export class MusicPlayer
                 for(let i = 0; i < songInfoArr.length; ++i)
                     sentence += `${i + 1}. ${songInfoArr[i]._title}(${songInfoArr[i]._duration})\n`;
 
-                console.log(sentence);
                 let reply = await message.reply(sentence, false);
                 this._searchMap.set(message.getUserID(), new SearchInformation(songInfoArr, reply));
             }
@@ -501,12 +500,12 @@ export class MusicPlayer
             this.nextSong();
     }
 
-    async skipSong()
+    async skipSongCommand()
     {
         this.nextSong();    // 내부에서 자동으로 재생중인 곡은 넘어감
     }
 
-    async listSong(message: Message)
+    async listSongCommand(message: Message)
     {
         if(this._songList.length == 0)
             message.reply("재생목록이 비었습니다.", true);
@@ -533,26 +532,8 @@ export class MusicPlayer
         }
     }
 
-    async randomSong(message: Message | SongPlayInformation, count: number)
+    private async randomSongInternal(count: number, output: {outVideoIDArr: Array<string>, outTitleArr: Array<string>, outDurationArr: Array<string>})
     {
-        Logger.logDev("--- Random Song ---");
-
-        const voiceChannel = message instanceof Message ? message.getVoiceChannel() : undefined;
-        if(message instanceof Message)
-        {
-            if(this.checkVoiceChannel(voiceChannel!) == false)
-            {
-                await message.reply("먼저 VoiceChannel에 입장해주세요.", true);
-                return;
-            }
-    
-            if(this._songRankInformationMap.size == 0)
-            {
-                await message.reply("노래 랭킹이 없습니다. 음악을 들어주세요.", true);
-                return;
-            }
-        }
-
         let videoIDArr = Array.from(this._songRankInformationMap.keys());
         let videoIDCount = videoIDArr.length;
         let percentageArr = Array<number>();
@@ -578,7 +559,6 @@ export class MusicPlayer
         shuffle(percentageArr);
 
         let maxCount = Math.min(videoIDArr.length, count);
-        let randomVedioIDArr = Array<string>();
         let limitLoopCount = 1000;
         for(let i = 0; i < maxCount && i < limitLoopCount; ++i, ++limitLoopCount)
         {
@@ -601,37 +581,73 @@ export class MusicPlayer
             }
 
             // 이미 추가된 건 추가하지 않는다.
-            if(randomVedioIDArr.indexOf(videoID) != -1)
+            if(output.outVideoIDArr.indexOf(videoID) != -1)
             {
                 --i;
                 continue;
             }
 
-            randomVedioIDArr.push(videoID);
+            output.outVideoIDArr.push(videoID);
         }
 
-        let titleArr = await YoutubeHelper.queryVideoTitleArr(randomVedioIDArr);
-        
-        let durationArr = [];
-        durationArr = await YoutubeHelper.queryVideoDurationArr(randomVedioIDArr);
+        output.outTitleArr = output.outTitleArr.concat(await YoutubeHelper.queryVideoTitleArr(output.outVideoIDArr));
+        output.outDurationArr = output.outDurationArr.concat(await YoutubeHelper.queryVideoDurationArr(output.outVideoIDArr));
 
-        for(let i = 0; i < randomVedioIDArr.length; ++i)
+        let errorCount = 0;
+        for(let i = 0; i < output.outVideoIDArr.length; ++i)
         {
-            const songInfo = new SongInformation(randomVedioIDArr[i], titleArr[i], durationArr[i]);
-            if(message instanceof Message)
-                this._songList.push(new SongPlayInformation(songInfo, voiceChannel!.id, message.getTextChannel(), message.getGuildID(), message.getVoiceAdapterCreator()));
-            else
-                this._songList.push(new SongPlayInformation(songInfo, message._voiceChannelID, message._textChannel, message._guildeID, message._adapterCreator));
+            if(output.outVideoIDArr[i] == undefined || output.outTitleArr[i] == undefined || output.outDurationArr[i] == undefined )
+            {
+                ++errorCount;
+
+                //this._songRankInformationMap.delete(output.outVideoIDArr[i]);
+                output.outVideoIDArr.splice(i, 1);
+                output.outTitleArr.splice(i, 1);
+                output.outDurationArr.splice(i, 1);
+            }
         }
 
-        if(message instanceof Message)
-            await message.reply(`${randomVedioIDArr.length}개의 랜덤 노래가 추가되었습니다.`, true);
+        if(errorCount > 0)
+            output = await this.randomSongInternal(errorCount, output);
+
+        return output;
+    }
+
+    async randomSongCommand(message: Message, count: number)
+    {
+        Logger.logDev("--- Random Song ---");
+
+        const voiceChannel = message.getVoiceChannel();
+        if(this.checkVoiceChannel(voiceChannel!) == false)
+        {
+            await message.reply("먼저 VoiceChannel에 입장해주세요.", true);
+            return;
+        }
+
+        if(this._songRankInformationMap.size == 0)
+        {
+            await message.reply("노래 랭킹이 없습니다. 음악을 들어주세요.", true);
+            return;
+        }
+
+        let videoIDArr = Array<string>();
+        let titleArr = Array<string>();
+        let durationArr = Array<string>();
+        let output = await this.randomSongInternal(count, {outVideoIDArr: videoIDArr, outTitleArr: titleArr, outDurationArr: durationArr});
+
+        for(let i = 0; i < videoIDArr.length; ++i)
+        {
+            const songInfo = new SongInformation(output.outVideoIDArr[i], output.outTitleArr[i], output.outDurationArr[i]);
+            this._songList.push(new SongPlayInformation(songInfo, voiceChannel!.id, message.getTextChannel(), message.getGuildID(), message.getVoiceAdapterCreator()));
+        }
+
+        await message.reply(`${videoIDArr.length}개의 랜덤 노래가 추가되었습니다.`, true);
 
         if(this._currentPlayingSongInformation == undefined)
             this.nextSong();
     }
 
-    async rankSong(message: Message)
+    async rankSongCommand(message: Message)
     {
         if(this._songRankInformationMap.size == 0)
         {
@@ -670,16 +686,32 @@ export class MusicPlayer
         message.reply(sentence, true);
     }
 
-    async autoRandomPlay(message: Message)
+    async autoRandomPlayCommand(message: Message)
     {
         this._autoRandomPlay = !this._autoRandomPlay;
         if(this._autoRandomPlay)
-            message.reply("자동재생 모드로 변경되었습니다.", true);
+            await message.reply("자동재생 모드로 변경되었습니다.", true);
         else
-            message.reply("일반재생 모드로 변경되었습니다.", true);
+            await message.reply("일반재생 모드로 변경되었습니다.", true);
+
+        if(this._currentPlayingSongInformation == undefined)
+        {
+            let videoIDArr = Array<string>();
+            let titleArr = Array<string>();
+            let durationArr = Array<string>();
+            let output = await this.randomSongInternal(1, {outVideoIDArr: videoIDArr, outTitleArr: titleArr, outDurationArr: durationArr});
+            for(let i = 0; i < videoIDArr.length; ++i)
+            {
+                const songInfo = new SongInformation(output.outVideoIDArr[i], output.outTitleArr[i], output.outDurationArr[i]);
+                this._songList.push(new SongPlayInformation(songInfo, message.getVoiceChannel()!.id, message.getTextChannel(), message.getGuildID(), message.getVoiceAdapterCreator()));
+            }
+
+            this._currentPlayingSongInformation = this._songList.shift();
+            this.playSong();
+        }
     }
 
-    async test(message: Message)
+    async testCommand(message: Message)
     {
         Logger.logDev(this._songHistory);
         Logger.logDev(JSON.stringify(this._songList, null, '  '));
@@ -752,18 +784,12 @@ export class MusicPlayer
 
                 // 오류가 났다면 현재 재생중인 곡을 다시 재생합니다.
                 ++this._currentPlayingSongInformation!._errorCount;
-                this.playSong();
                 this._currentPlayingSongInformation!._textChannel.send(`${this._currentPlayingSongInformation!._songInformation._title}(${this._currentPlayingSongInformation!._songInformation._duration}) 재생 오류로 다시 재생합니다.`);
+                this.playSong();
             })
             .on(AudioPlayerStatus.Idle, (oldState: AudioPlayerState, newState: AudioPlayerState) => {
                 if(oldState.status == AudioPlayerStatus.Playing && newState.status == AudioPlayerStatus.Idle)
                 {
-                    if(this._currentPlayingSongInformation == undefined)
-                    {
-                        this._disconnectionTimer = setTimeout(() => {this.disconnect()}, 1000 * gDisconnectTimeoutSecond);
-                        return;
-                    }
-
                     const id = this._currentPlayingSongInformation!._songInformation._id;
                     let playCount = this._songRankInformationMap.get(id);
                     if(playCount == undefined)
@@ -862,15 +888,17 @@ export class MusicPlayer
         // 재생할 다음 곡이 없으면 그대로 disconnection 예약
         if(this._songList.length == 0)
         {
-            if(this._autoRandomPlay == false)
+            if(this._autoRandomPlay == true)
             {
-                this._disconnectionTimer = setTimeout(() => {this.disconnect()}, 1000 * gDisconnectTimeoutSecond);
-                return;
-            }
-            else
-            {
-                this.randomSong(this._currentPlayingSongInformation!, 1);
-                //this._currentPlayingSongInformation!._textChannel.send(`${this._currentPlayingSongInformation!._songInformation._title}(${this._currentPlayingSongInformation!._songInformation._duration}) 노래를 재생합니다.`);
+                let videoIDArr = Array<string>();
+                let titleArr = Array<string>();
+                let durationArr = Array<string>();
+                let output = await this.randomSongInternal(1, {outVideoIDArr: videoIDArr, outTitleArr: titleArr, outDurationArr: durationArr});
+                for(let i = 0; i < videoIDArr.length; ++i)
+                {
+                    const songInfo = new SongInformation(output.outVideoIDArr[i], output.outTitleArr[i], output.outDurationArr[i]);
+                    this._songList.push(new SongPlayInformation(songInfo, this._currentPlayingSongInformation!._voiceChannelID, this._currentPlayingSongInformation!._textChannel, this._currentPlayingSongInformation!._guildeID, this._currentPlayingSongInformation!._adapterCreator));
+                }
             }
         }
 

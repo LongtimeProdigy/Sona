@@ -9,19 +9,17 @@
 
 ## Youtube Stream 라이브러리 말고 제작해서 사용하기.. 너무 라이브러리 의존적임
 
-
+## 코드
+- duration 시간으로 들고 있고 출력할때만 string변경하자 (duration으로 시간 체크하는 로직이 필요할 수 있음)
 ## Search
 ## Play
-- MP Error시에 최대 횟수 5회정도로 해야할듯.. 무한 루프에 걸리는 경우가 있음
 ## Skip
 - List 단일
 - List 범위
 ## Rank
 - 랭크 제거 기능
 ## Random
-- 히스토리 기록하고 히스토리에 없는 것 리스트에 추가
 - 오토 랜덤모드일 경우 모든 플레이어 다 나가면 재생 중지할 수 있어야함
-- RandomSong 함수 정리 필요함. Message보내는 게 너무 더러움
 ## ChatGPT
 ## Food
 - 추가
