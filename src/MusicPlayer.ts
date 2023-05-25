@@ -788,6 +788,8 @@ export class MusicPlayer
                 this.playSong();
             })
             .on(AudioPlayerStatus.Idle, (oldState: AudioPlayerState, newState: AudioPlayerState) => {
+                Logger.logDev('--- MP State Change ---');
+
                 if(oldState.status == AudioPlayerStatus.Playing && newState.status == AudioPlayerStatus.Idle)
                 {
                     const id = this._currentPlayingSongInformation!._songInformation._id;
@@ -875,15 +877,12 @@ export class MusicPlayer
         this._player.play(resource);
 
         this._currentPlayingSongInformation._textChannel.send(`${this._currentPlayingSongInformation._songInformation._title}(${this._currentPlayingSongInformation._songInformation._duration}) 노래를 재생합니다.`);
+        Logger.logDev(`--- Play: ${this._currentPlayingSongInformation._songInformation._title}`);
     }
 
     private async nextSong()
     {
         Logger.logDev("--- Next Song ---");
-
-        // 재생 중인 노래가 있다면 노래 끊기
-        if(this._currentPlayingSongInformation != undefined)
-            this._player?.stop();
 
         // 재생할 다음 곡이 없으면 그대로 disconnection 예약
         if(this._songList.length == 0)
