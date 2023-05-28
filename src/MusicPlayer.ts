@@ -360,9 +360,10 @@ export class Message
 
 export class MusicPlayer
 {
+    _client: DiscordJS.Client;
     _guildID: string;
+    
     _autoRandomPlay: boolean;
-
     _songHistory: MaxQueue<string>;
     _searchMap: Map<string, SearchInformation>;
     _songList: Array<SongPlayInformation>;
@@ -370,15 +371,15 @@ export class MusicPlayer
     _player: AudioPlayer | undefined;
     _disconnectionTimer: NodeJS.Timeout | undefined;
     _currentPlayingSongInformation: SongPlayInformation | undefined;
-
     _songRankInformationMap: Map<string, number>;
     _songRankSaveInterval: NodeJS.Timer;
 
-    constructor(guildID: string)
+    constructor(client: DiscordJS.Client, guildID: string)
     {
+        this._client = client;
         this._guildID = guildID;
-        this._autoRandomPlay = false;
 
+        this._autoRandomPlay = false;
         this._songHistory = new MaxQueue(50);
         this._searchMap = new Map<string, SearchInformation>();
         this._songList = new Array<SongPlayInformation>;
@@ -403,6 +404,16 @@ export class MusicPlayer
             let sentence = Object.fromEntries(this._songRankInformationMap);
             fs.writeFileSync(rankFilePath, JSON.stringify(sentence));
         }, 1000 * gSongRankSaveIntervalSecond);
+    }
+
+    update(deltaTime: number) : void
+    {
+        if(this._currentPlayingSongInformation?._voiceChannelID == undefined)
+            return;
+
+        const voiceChannel = this._client.guilds.cache.get(this._guildID)?.channels.cache.get(this._currentPlayingSongInformation._voiceChannelID) as DiscordJS.VoiceBasedChannel;
+        if(voiceChannel.members.size == 1)  // 1명 >> Sona 자기자신만 있는 경우
+            this.disconnect();
     }
 
     private checkVoiceChannel(voiceChannel: DiscordJS.VoiceBasedChannel | null)
@@ -910,7 +921,7 @@ export class MusicPlayer
     private disconnect()
     {
         this._autoRandomPlay = false;
-        
+
         this._currentPlayingSongInformation = undefined;
         this._songList = new Array<SongPlayInformation>();
         

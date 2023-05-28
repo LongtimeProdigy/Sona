@@ -8,3 +8,10 @@ else
 import Sona from './Sona';
 const Application = new Sona();
 Application.run();
+
+let lastUpdate = Date.now();
+const updateInterval = setInterval(() => {
+    let now = Date.now();
+    let deltaTime = now - lastUpdate;
+    Application.update(deltaTime);
+}, 500);

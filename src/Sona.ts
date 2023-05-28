@@ -9,9 +9,14 @@ class DiscordSession
 {
     _musicPlayer: MusicPlayer;
     
-    constructor(guildID: string)
+    constructor(client: DiscordJS.Client, guildID: string)
     {
-        this._musicPlayer = new MusicPlayer(guildID);
+        this._musicPlayer = new MusicPlayer(client, guildID);
+    }
+
+    update(deltaTime: number) : void
+    {
+        this._musicPlayer.update(deltaTime);
     }
 }
 
@@ -31,7 +36,7 @@ export default class Sona
         if(!session)
         {
             let guildID = message.getGuildID();
-            this._sessionMap.set(message.getGuildID(), new DiscordSession(guildID));
+            this._sessionMap.set(message.getGuildID(), new DiscordSession(this._client, guildID));
             session = this._sessionMap.get(guildID)!;
         }
 
@@ -273,5 +278,12 @@ export default class Sona
     run()
     {
         this._client.login(DiscordToken);
+    }
+
+    update(deltaTime: number)
+    {
+        this._sessionMap.forEach((value, key) => {
+            value.update(deltaTime);
+        });
     }
 }
