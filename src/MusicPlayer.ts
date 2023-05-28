@@ -689,11 +689,13 @@ export class MusicPlayer
     async autoRandomPlayCommand(message: Message)
     {
         this._autoRandomPlay = !this._autoRandomPlay;
-        if(this._autoRandomPlay)
-            await message.reply("자동재생 모드로 변경되었습니다.", true);
-        else
+        if(this._autoRandomPlay == false)
+        {
             await message.reply("일반재생 모드로 변경되었습니다.", true);
+            return;
+        }
 
+        await message.reply("자동재생 모드로 변경되었습니다.", true);
         if(this._currentPlayingSongInformation == undefined)
         {
             let videoIDArr = Array<string>();
@@ -907,6 +909,8 @@ export class MusicPlayer
 
     private disconnect()
     {
+        this._autoRandomPlay = false;
+        
         this._currentPlayingSongInformation = undefined;
         this._songList = new Array<SongPlayInformation>();
         
