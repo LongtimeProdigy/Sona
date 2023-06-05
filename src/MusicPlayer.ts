@@ -6,9 +6,6 @@ import path from 'path';
 
 import Logger from './Logger'
 import {YoutubeToken, ResourcePath, SongRankPath, SongRankPrefix} from './Token.json';
-import { VoiceConnectionDisconnectedOtherState } from '@discordjs/voice';
-
-const DBEUGMODE = true;
 
 const gYoutubeLink = "https://www.youtube.com/watch";
 const gYoutubeLinkVideoIDKeyword = "v";
@@ -17,6 +14,8 @@ const gQueryPlayListMaxCount = 25;
 
 const gSongRankSaveIntervalSecond = 3600;
 const gDisconnectTimeoutSecond = 60;
+
+let test = 0;
 
 class Queue<T>
 {
@@ -66,12 +65,27 @@ class SongInformation
 {
     _title: string;
     _id: string;
-    _duration: string;
-    constructor(id: string, title: string, duration: string)
+    _duration: number;
+    constructor(id: string, title: string, duration: number)
     {
         this._title = title;
         this._id = id;
         this._duration = duration;
+    }
+
+    getSongDurationString() : string
+    {
+        let hours = Math.floor(this._duration / 3600);
+        let minutes = Math.floor((this._duration - hours * 3600) / 60);
+        let seconds = this._duration % 60;
+
+        let ret = "";
+        if(hours > 0)
+            ret += "" + hours + ":" + (minutes < 10 ? "0" : "");
+        ret += "" + minutes + ":" + (seconds < 10 ? "0" : "");
+        ret += "" + seconds;
+
+        return ret;
     }
 }
 
@@ -113,6 +127,17 @@ enum VideoQueryType
     TITLE, 
     DURATION,    
 }
+class VideoTitleAndDurationQueryResult
+{
+    _title : string;
+    _duration : number;
+
+    constructor(title: string, duration: number)
+    {
+        this._title = title;
+        this._duration = duration;
+    }
+}
 class YoutubeHelper
 {
     static kPrefixURL: string = 'https://www.googleapis.com/youtube/v3/';
@@ -121,9 +146,13 @@ class YoutubeHelper
 
     private static async queryVideo(queryType: VideoQueryType, videoIDArr: Array<string>)
     {
+        let returnArr = Array<string | undefined>();
+        let count = videoIDArr.length;
+        if(count == 0)
+            return returnArr;
+
         let partName = queryType == VideoQueryType.TITLE ? "snippet" : "contentDetails";
         let url = `${this.kPrefixURL}videos?part=${partName}&key=${YoutubeToken}&id=`;
-        let count = videoIDArr.length;
         for(var i = 0; i < count; ++i)
         {
             url += videoIDArr[i];
@@ -135,10 +164,22 @@ class YoutubeHelper
         let body = await res.text();
         let obj = JSON.parse(body);
 
-        let returnArr = Array<string>();
-        let typeName = queryType == VideoQueryType.TITLE ? "title" : "duration";
+        let resultVideoIDMap = new Map<string, any>();
         for(const item of obj['items'])
-            returnArr.push(item[partName][typeName]);
+            resultVideoIDMap.set(item["id"], item[partName]);
+
+        let typeName = queryType == VideoQueryType.TITLE ? "title" : "duration";
+        for(const index in videoIDArr)
+        {
+            let value = resultVideoIDMap.get(videoIDArr[index]);
+            if(value == undefined)
+            {
+                Logger.logDev(`Query(${typeName})실패. VideoID(${videoIDArr[index]})가 올바른지 확인이 필요합니다.`);
+                returnArr.push(undefined);
+            }
+            else
+                returnArr.push(value[typeName]);
+        }
 
         return returnArr;
     }
@@ -154,7 +195,7 @@ class YoutubeHelper
         // https://developers.google.com/youtube/v3/docs/videos/list?hl=ko
         let durationArr = await YoutubeHelper.queryVideo(VideoQueryType.DURATION, videoIDArr);
         
-        function YTDurationToSeconds(duration: string)
+        function YTDurationToSeconds(duration: string) : number
         {
             let match = duration.match(/PT(\d+H)?(\d+M)?(\d+S)?/);
             
@@ -167,27 +208,55 @@ class YoutubeHelper
             let minutes = (parseInt(match2[1]!) || 0);
             let seconds = (parseInt(match2[2]!) || 0);
             
-            let ret = "";
-            if(hours > 0)
-            ret += "" + hours + ":" + (minutes < 10 ? "0" : "");
-            
-            ret += "" + minutes + ":" + (seconds < 10 ? "0" : "");
-            ret += "" + seconds;
-            
-            return ret;
+            return hours * 3600 + minutes * 60 + seconds;
         }
         
         // query에서 이미 durationArr의 index와 videoIDArr의 index가 서로 정렬되어 있습니다.
         // 만약 정렬되지 않는다면 여리서 정렬해야합니다.
 
-        durationArr = durationArr.map((value: string) => {
-            return YTDurationToSeconds(value);
+        let secondArr = durationArr.map((value: string | undefined) => {
+            return value == undefined ? undefined : YTDurationToSeconds(value);
         });
 
-        return durationArr;
+        return secondArr;
     }
 
-    static createSongInformation(idArr: Array<string>, titleArr: Array<string>, durationArr: Array<string>)
+    static async queryVideoTitleAndDuration(videoIDArr: Array<string>)
+    {
+        let tempVideoIDArr = videoIDArr.slice();
+        let titleArr = await this.queryVideoTitleArr(tempVideoIDArr);
+        for(let i = 0; i < titleArr.length; ++i)
+        {
+            if(titleArr[i] == undefined)
+            {
+                titleArr.splice(i, 1);
+                tempVideoIDArr.splice(i, 1);
+                --i;
+            }
+        }
+
+        let returnArr = Array<VideoTitleAndDurationQueryResult>();
+        if(titleArr.length == 0)
+            return returnArr;
+
+        let durationArr = await this.queryVideoDurationArr(tempVideoIDArr);
+        for(let i = 0; i < durationArr.length; ++i)
+        {
+            if(durationArr[i] == undefined)
+            {
+                durationArr.splice(i, 1);
+                tempVideoIDArr.splice(i, 1);
+                titleArr.splice(i, 1);
+                --i;
+            }
+
+            returnArr.push(new VideoTitleAndDurationQueryResult(titleArr[i]!, durationArr[i]!));
+        }
+
+        return returnArr;
+    }
+
+    static createSongInformation(idArr: Array<string>, titleArr: Array<string>, durationArr: Array<number>)
     {
         let songInformationArr: Array<SongInformation> = [];
         if((idArr.length != durationArr.length) || (titleArr.length != durationArr.length))
@@ -233,8 +302,8 @@ class YoutubeHelper
             }
         }
 
-        let durationArr = await YoutubeHelper.queryVideoDurationArr(idArr);
-
+        // 방금 위에서 검색한 ID이므로 실패할 일이 없다고 가정합니다.
+        let durationArr = await YoutubeHelper.queryVideoDurationArr(idArr) as Array<number>;
         return YoutubeHelper.createSongInformation(idArr, titleArr, durationArr);
     }
 
@@ -258,7 +327,8 @@ class YoutubeHelper
             titleArr.push(itemArr[i]["snippet"]["title"]);
         }
 
-        let durationArr = await YoutubeHelper.queryVideoDurationArr(idArr);
+        // 방금 위에서 검색한 ID이므로 실패할 일이 없다고 가정합니다.
+        let durationArr = await YoutubeHelper.queryVideoDurationArr(idArr) as Array<number>;
 
         return YoutubeHelper.createSongInformation(idArr, titleArr, durationArr);
     }
@@ -443,7 +513,7 @@ export class MusicPlayer
 
                 let sentence = `${content} 검색결과\n`;
                 for(let i = 0; i < songInfoArr.length; ++i)
-                    sentence += `${i + 1}. ${songInfoArr[i]._title}(${songInfoArr[i]._duration})\n`;
+                    sentence += `${i + 1}. ${songInfoArr[i]._title}(${songInfoArr[i].getSongDurationString()})\n`;
 
                 let reply = await message.reply(sentence, false);
                 this._searchMap.set(message.getUserID(), new SearchInformation(songInfoArr, reply));
@@ -468,7 +538,7 @@ export class MusicPlayer
                 }
 
                 this._songList.push(new SongPlayInformation(searchInfo._songInformationArr[songIndex], voiceChannel!.id, message.getTextChannel(), message.getGuildID(), message.getVoiceAdapterCreator()));
-                await message.reply(`${searchInfo._songInformationArr[songIndex]._title}(${searchInfo._songInformationArr[songIndex]._duration}) 노래가 추가되었습니다.`, true);
+                await message.reply(`${searchInfo._songInformationArr[songIndex]._title}(${searchInfo._songInformationArr[songIndex].getSongDurationString()}) 노래가 추가되었습니다.`, true);
                 await searchInfo._message.delete();
             }
             break;
@@ -494,11 +564,18 @@ export class MusicPlayer
             {
                 const temp = content.split(`${gYoutubeLinkVideoIDKeyword}=`);
                 const videoID = temp[1].split(`&`)[0];
-                const durationArr = await YoutubeHelper.queryVideoDurationArr([videoID]);
-                const title = (await YoutubeHelper.queryVideoTitleArr([videoID]))[0];
-                const songInfo = new SongInformation(videoID, title, durationArr[0]);
-                this._songList.push(new SongPlayInformation(songInfo, voiceChannel!.id, message.getTextChannel(), message.getGuildID(), message.getVoiceAdapterCreator()));
-                await message.reply(`${title}(${durationArr[0]}) 노래가 추가되었습니다.`, true);
+
+                let titleAndDurationArr = await YoutubeHelper.queryVideoTitleAndDuration([videoID]);
+                if(titleAndDurationArr.length == 0)
+                {
+                    await message.reply(`노래의 Duration을 가져오지 못했습니다. VideoID${videoID}가 올바른지 확인해주세요.`, true);
+                    return;
+                }
+
+                const songInfo = new SongInformation(videoID, titleAndDurationArr[0]._title, titleAndDurationArr[0]._duration);
+                const newSong = new SongPlayInformation(songInfo, voiceChannel!.id, message.getTextChannel(), message.getGuildID(), message.getVoiceAdapterCreator());
+                this._songList.push(newSong);
+                await message.reply(`${newSong._songInformation._title}(${newSong._songInformation.getSongDurationString()}) 노래가 추가되었습니다.`, true);
             }
             break;
             default:
@@ -513,7 +590,7 @@ export class MusicPlayer
 
     async skipSongCommand()
     {
-        this.nextSong();    // 내부에서 자동으로 재생중인 곡은 넘어감
+        this._player?.stop();
     }
 
     async listSongCommand(message: Message)
@@ -525,7 +602,7 @@ export class MusicPlayer
             let sentence = `Count: ${this._songList.length}` + "```";
             for(let i = 0; i < this._songList.length; ++i){
                 let tempString = 
-                `${i}. ${this._songList[i]._songInformation._title}(${this._songList[i]._songInformation._duration})\n`;
+                `${i}. ${this._songList[i]._songInformation._title}(${this._songList[i]._songInformation.getSongDurationString()})\n`;
 
                 // discord 정책상 2000글자가 제한임
                 // 외 남은 곡수를 붙이기 위해 50자를 더 여유롭게 책정함
@@ -543,15 +620,21 @@ export class MusicPlayer
         }
     }
 
-    private async randomSongInternal(count: number, output: {outVideoIDArr: Array<string>, outTitleArr: Array<string>, outDurationArr: Array<string>})
+    private async randomSongInternal2(count: number, output: {videoIDArr: Array<string>, titleArr: Array<string>, durationArr: Array<number>}, depth: number)
     {
+        if(depth > 5)
+            return output;
+
         let videoIDArr = Array.from(this._songRankInformationMap.keys());
         let videoIDCount = videoIDArr.length;
         let percentageArr = Array<number>();
         for(let i = 0; i < videoIDCount; ++i)
         {
-            let percent = -i + videoIDCount;
-            for(let j = 0; j < percent; ++j)
+            let playCount = this._songRankInformationMap.get(videoIDArr[i]);
+            if(playCount == undefined)
+                continue;
+
+            for(let j = 0; j < playCount; ++j)
                 percentageArr.push(i);
         }
 
@@ -569,9 +652,9 @@ export class MusicPlayer
         }
         shuffle(percentageArr);
 
+        let randomVideoIDArr = Array<string>();
         let maxCount = Math.min(videoIDArr.length, count);
-        let limitLoopCount = 1000;
-        for(let i = 0; i < maxCount && i < limitLoopCount; ++i, ++limitLoopCount)
+        for(let i = 0; i < maxCount; ++i)
         {
             let randomIndex = Math.floor(Math.random() * percentageArr.length);
             let percentIndex = percentageArr[randomIndex];
@@ -580,6 +663,7 @@ export class MusicPlayer
             // 이미 재생목록에 있는 건 추가하지 않는다.
             if(this._songList.find(element => element._songInformation._id == videoID) != undefined)
             {
+                Logger.logDev("이미 재생목록에 있어 랜덤목록에 추가하지 않습니다.");
                 --i;
                 continue;
             }
@@ -587,41 +671,57 @@ export class MusicPlayer
             // 히스토리 목록에 있던 건 추가하지 않는다.
             if(this._songHistory.indexOf(videoID) != -1)
             {
+                Logger.logDev("이미 히스토리에 있어 랜덤목록에 추가하지 않습니다.");
                 --i;
                 continue;
             }
 
-            // 이미 추가된 건 추가하지 않는다.
-            if(output.outVideoIDArr.indexOf(videoID) != -1)
+            // 이미 추가된 건 추가하지 않는다. (중복 추첨된 경우)
+            if(randomVideoIDArr.indexOf(videoID) != -1 || output.videoIDArr.indexOf(videoID) != -1)
             {
+                Logger.logDev("이미 랜덤목록에 있어 랜덤목록에 추가하지 않습니다.");
                 --i;
                 continue;
             }
 
-            output.outVideoIDArr.push(videoID);
+            randomVideoIDArr.push(videoID);
         }
 
-        output.outTitleArr = output.outTitleArr.concat(await YoutubeHelper.queryVideoTitleArr(output.outVideoIDArr));
-        output.outDurationArr = output.outDurationArr.concat(await YoutubeHelper.queryVideoDurationArr(output.outVideoIDArr));
-
-        let errorCount = 0;
-        for(let i = 0; i < output.outVideoIDArr.length; ++i)
+        let randomTitleAndDurationArr = await YoutubeHelper.queryVideoTitleAndDuration(randomVideoIDArr);
+        if(randomTitleAndDurationArr.length == 0)
+            randomVideoIDArr = [];
+        for(let i = 0; i < randomTitleAndDurationArr.length; ++i)
         {
-            if(output.outVideoIDArr[i] == undefined || output.outTitleArr[i] == undefined || output.outDurationArr[i] == undefined )
+            if(randomTitleAndDurationArr[i]._duration < 60 * 1 || randomTitleAndDurationArr[i]._duration > 60 * 8)
             {
-                ++errorCount;
-
-                //this._songRankInformationMap.delete(output.outVideoIDArr[i]);
-                output.outVideoIDArr.splice(i, 1);
-                output.outTitleArr.splice(i, 1);
-                output.outDurationArr.splice(i, 1);
+                randomTitleAndDurationArr.splice(i, 1);
+                randomVideoIDArr.splice(i, 1);
             }
         }
 
-        if(errorCount > 0)
-            output = await this.randomSongInternal(errorCount, output);
+        let randomTitleArr = Array<string>();
+        let randomDurationArr = Array<number>();
+        for(let element of randomTitleAndDurationArr)
+        {
+            randomTitleArr.push(element._title);
+            randomDurationArr.push(element._duration);
+        }
+
+        output.videoIDArr = output.videoIDArr.concat(randomVideoIDArr);
+        output.titleArr = output.titleArr.concat(randomTitleArr);
+        output.durationArr = output.durationArr.concat(randomDurationArr);
+
+        // Error에 걸려 개수가 모자른 경우에는 개수를 만족할 수 있도록 재귀호출
+        let requestCount = maxCount - randomVideoIDArr.length;
+        if(requestCount > 0)
+            output = await this.randomSongInternal2(requestCount, output, depth + 1);
 
         return output;
+    }
+
+    private async randomSongInternal(count: number)
+    {
+        return this.randomSongInternal2(count, {videoIDArr: Array<string>(), titleArr: Array<string>(), durationArr: Array<number>()}, 0);
     }
 
     async randomSongCommand(message: Message, count: number)
@@ -641,18 +741,14 @@ export class MusicPlayer
             return;
         }
 
-        let videoIDArr = Array<string>();
-        let titleArr = Array<string>();
-        let durationArr = Array<string>();
-        let output = await this.randomSongInternal(count, {outVideoIDArr: videoIDArr, outTitleArr: titleArr, outDurationArr: durationArr});
-
-        for(let i = 0; i < videoIDArr.length; ++i)
+        let output = await this.randomSongInternal(count);
+        for(let i = 0; i < output.videoIDArr.length; ++i)
         {
-            const songInfo = new SongInformation(output.outVideoIDArr[i], output.outTitleArr[i], output.outDurationArr[i]);
+            const songInfo = new SongInformation(output.videoIDArr[i], output.titleArr[i], output.durationArr[i]);
             this._songList.push(new SongPlayInformation(songInfo, voiceChannel!.id, message.getTextChannel(), message.getGuildID(), message.getVoiceAdapterCreator()));
         }
 
-        await message.reply(`${videoIDArr.length}개의 랜덤 노래가 추가되었습니다.`, true);
+        await message.reply(`${output.videoIDArr.length}개의 랜덤 노래가 추가되었습니다.`, true);
 
         if(this._currentPlayingSongInformation == undefined)
             this.nextSong();
@@ -686,6 +782,9 @@ export class MusicPlayer
         let sentence = "★SongRanking★```";
         for(let i = 0; i < titleArr.length; ++i)
         {
+            if(titleArr[i] == undefined)
+                continue;
+
             let temp = `${i + 1}. ${titleArr[i]} (${countArr[i]})\n`;
             if(sentence.length + temp.length > 2000)
                 break;
@@ -709,69 +808,34 @@ export class MusicPlayer
         await message.reply("자동재생 모드로 변경되었습니다.", true);
         if(this._currentPlayingSongInformation == undefined)
         {
-            let videoIDArr = Array<string>();
-            let titleArr = Array<string>();
-            let durationArr = Array<string>();
-            let output = await this.randomSongInternal(1, {outVideoIDArr: videoIDArr, outTitleArr: titleArr, outDurationArr: durationArr});
-            for(let i = 0; i < videoIDArr.length; ++i)
+            let output = await this.randomSongInternal(1);
+            for(let i = 0; i < output.videoIDArr.length; ++i)
             {
-                const songInfo = new SongInformation(output.outVideoIDArr[i], output.outTitleArr[i], output.outDurationArr[i]);
+                const songInfo = new SongInformation(output.videoIDArr[i], output.titleArr[i], output.durationArr[i]);
                 this._songList.push(new SongPlayInformation(songInfo, message.getVoiceChannel()!.id, message.getTextChannel(), message.getGuildID(), message.getVoiceAdapterCreator()));
             }
 
-            this._currentPlayingSongInformation = this._songList.shift();
-            this.playSong();
+            this.nextSong();
         }
     }
 
     async testCommand(message: Message)
     {
-        Logger.logDev(this._songHistory);
-        Logger.logDev(JSON.stringify(this._songList, null, '  '));
-        Logger.logDev(JSON.stringify(this._currentPlayingSongInformation, null, '  '));
     }
 
-    private async playSong()
+    /*
+    *   절대 다른 곳에서 쓰지마세요! Play와 Stop의 CallBack 꼬일 수 있습니다.
+    */
+    private async playSong(songPlayInfo: SongPlayInformation)
     {
         Logger.logDev("--- Play Song ---");
-
-        if(this._currentPlayingSongInformation == undefined)
-        {
-            this._player?.stop();
-            this._disconnectionTimer = setTimeout(() => {this.disconnect()}, 1000 * gDisconnectTimeoutSecond);
-            return;
-        }
 
         this.clearDisconnectTimeout();
 
         if(this._connection == undefined)
         {
             Logger.logDev("--- Create Connection ---");
-            this._connection = joinVoiceChannel({
-                channelId: this._currentPlayingSongInformation!._voiceChannelID, 
-                guildId: this._currentPlayingSongInformation!._guildeID, 
-                adapterCreator: this._currentPlayingSongInformation!._adapterCreator
-            });
-
-            this._connection.on("error", error => {
-                Logger.logDev("--- CN Error ---\n", error);
-            })
-            .on(VoiceConnectionStatus.Ready, () => {
-                Logger.logDev("--- CN Ready ---");
-            })
-            .on(VoiceConnectionStatus.Connecting, () => {
-                Logger.logDev("--- CN Connecting ---");
-            })
-            .on(VoiceConnectionStatus.Signalling, () => {
-                Logger.logDev("--- CN Signaling ---");
-            })
-            .on(VoiceConnectionStatus.Disconnected, () => {
-                Logger.logDev("--- CN Disconnected ---");
-                this.disconnect();
-            })
-            .on(VoiceConnectionStatus.Destroyed, () => {
-                Logger.logDev("--- CN Destroyed ---");
-            });
+            this._connection = await this.joinVoiceChannel(songPlayInfo._voiceChannelID, songPlayInfo._guildeID, songPlayInfo._adapterCreator);
 
             if(process.env.NODE_ENV !== 'production')
             {
@@ -789,7 +853,7 @@ export class MusicPlayer
             this._player.on('error', error => {
                 Logger.logDev('--- MP Error ---\n', error);
 
-                if(this._currentPlayingSongInformation!._errorCount >= 5)
+                if(this._currentPlayingSongInformation!._errorCount >= 3)
                 {
                     this.nextSong();
                     return;
@@ -797,8 +861,8 @@ export class MusicPlayer
 
                 // 오류가 났다면 현재 재생중인 곡을 다시 재생합니다.
                 ++this._currentPlayingSongInformation!._errorCount;
-                this._currentPlayingSongInformation!._textChannel.send(`${this._currentPlayingSongInformation!._songInformation._title}(${this._currentPlayingSongInformation!._songInformation._duration}) 재생 오류로 다시 재생합니다.`);
-                this.playSong();
+                this._currentPlayingSongInformation!._textChannel.send(`${this._currentPlayingSongInformation!._songInformation._title}) 재생 오류로 다시 재생합니다.`);
+                this.playSong(this._currentPlayingSongInformation!);
             })
             .on(AudioPlayerStatus.Idle, (oldState: AudioPlayerState, newState: AudioPlayerState) => {
                 Logger.logDev('--- MP State Change ---');
@@ -884,13 +948,49 @@ export class MusicPlayer
             }
         }
 
-        const readStream = await createAudioStream(this._currentPlayingSongInformation!);
+        const readStream = await createAudioStream(songPlayInfo);
         const resource = createAudioResource(readStream);
         this._connection.subscribe(this._player);
         this._player.play(resource);
 
-        this._currentPlayingSongInformation._textChannel.send(`${this._currentPlayingSongInformation._songInformation._title}(${this._currentPlayingSongInformation._songInformation._duration}) 노래를 재생합니다.`);
-        Logger.logDev(`--- Play: ${this._currentPlayingSongInformation._songInformation._title}`);
+        this._currentPlayingSongInformation = songPlayInfo;
+
+        this._currentPlayingSongInformation!._textChannel.send(`${this._currentPlayingSongInformation!._songInformation._title}(${this._currentPlayingSongInformation!._songInformation.getSongDurationString()}) 노래를 재생합니다.`);
+        Logger.logDev(`--- Play: ${this._currentPlayingSongInformation!._songInformation._title}`);
+    }
+
+    private async joinVoiceChannel(voiceChannelID: string, guildID: string, adapterCreator: DiscordJS.InternalDiscordGatewayAdapterCreator) : Promise<VoiceConnection>
+    {
+        return new Promise((resolve, reject) => {
+            let connection = joinVoiceChannel({
+                channelId: voiceChannelID, 
+                guildId: guildID, 
+                adapterCreator: adapterCreator
+            });
+    
+            connection.on("error", error => {
+                Logger.logDev("--- CN Error ---\n", error);
+                reject(connection);
+            })
+            .on(VoiceConnectionStatus.Ready, () => {
+                Logger.logDev("--- CN Ready ---");
+
+                resolve(connection);
+            })
+            .on(VoiceConnectionStatus.Connecting, () => {
+                Logger.logDev("--- CN Connecting ---");
+            })
+            .on(VoiceConnectionStatus.Signalling, () => {
+                Logger.logDev("--- CN Signaling ---");
+            })
+            .on(VoiceConnectionStatus.Disconnected, () => {
+                Logger.logDev("--- CN Disconnected ---");
+                this.disconnect();
+            })
+            .on(VoiceConnectionStatus.Destroyed, () => {
+                Logger.logDev("--- CN Destroyed ---");
+            });
+        });
     }
 
     private async nextSong()
@@ -902,24 +1002,28 @@ export class MusicPlayer
         {
             if(this._autoRandomPlay == true)
             {
-                let videoIDArr = Array<string>();
-                let titleArr = Array<string>();
-                let durationArr = Array<string>();
-                let output = await this.randomSongInternal(1, {outVideoIDArr: videoIDArr, outTitleArr: titleArr, outDurationArr: durationArr});
-                for(let i = 0; i < videoIDArr.length; ++i)
+                let output = await this.randomSongInternal(1);
+                for(let i = 0; i < output.videoIDArr.length; ++i)
                 {
-                    const songInfo = new SongInformation(output.outVideoIDArr[i], output.outTitleArr[i], output.outDurationArr[i]);
+                    const songInfo = new SongInformation(output.videoIDArr[i], output.titleArr[i], output.durationArr[i]);
                     this._songList.push(new SongPlayInformation(songInfo, this._currentPlayingSongInformation!._voiceChannelID, this._currentPlayingSongInformation!._textChannel, this._currentPlayingSongInformation!._guildeID, this._currentPlayingSongInformation!._adapterCreator));
                 }
             }
+            else
+            {
+                this._currentPlayingSongInformation = undefined;
+                this._disconnectionTimer = setTimeout(() => {this.disconnect()}, 1000 * gDisconnectTimeoutSecond);
+                return;
+            }
         }
 
-        this._currentPlayingSongInformation = this._songList.shift();
-        this.playSong();
+        this.playSong(this._songList.shift()!);
     }
 
     private disconnect()
     {
+        Logger.logDev("--- Disconnect ---")
+
         this._autoRandomPlay = false;
 
         this._currentPlayingSongInformation = undefined;
