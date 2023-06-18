@@ -3,15 +3,18 @@ import DiscordJS from 'discord.js';
 
 import Logger from './Logger'
 import {Message, MusicPlayer} from "./MusicPlayer"
+import { ChatGPT } from './ChatGPT';
 import {CommandPrefix, DiscordToken} from './Token.json';
 
 class DiscordSession
 {
     _musicPlayer: MusicPlayer;
+    _gpt: ChatGPT;
     
     constructor(client: DiscordJS.Client, guildID: string)
     {
         this._musicPlayer = new MusicPlayer(client, guildID);
+        this._gpt = new ChatGPT();
     }
 
     update(deltaTime: number) : void
@@ -72,7 +75,7 @@ export default class Sona
                 await this.handleSlashCommand(this._client, interaction);
         });
 
-        this._client.on("messageCreate", (message: DiscordJS.Message) => {
+        this._client.on("messageCreate", async (message: DiscordJS.Message) => {
             if(message.author.bot == true)
                 return;
             
@@ -88,6 +91,7 @@ export default class Sona
                     RANDOM, 
                     RANK,
                     AUTORANDOMMODE, 
+                    CHATGPT, 
                     TEST,  
                     COUNT, 
                 }
@@ -105,6 +109,8 @@ export default class Sona
                         return CommandType.RANK;
                     else if(message.content.startsWith(`${CommandPrefix}AutoRandomMode`))
                         return CommandType.AUTORANDOMMODE;
+                    else if(message.content.startsWith(`${CommandPrefix}gpt`))
+                        return CommandType.CHATGPT;
                     else if(message.content.startsWith(`${CommandPrefix}test`))
                         return CommandType.TEST;
                     else
@@ -132,6 +138,13 @@ export default class Sona
                     break;
                     case CommandType.AUTORANDOMMODE:
                         session._musicPlayer.autoRandomPlayCommand(newMessage);
+                    break;
+                    case CommandType.CHATGPT:
+                    {
+                        const sentence = newMessage.getContent();
+                        const response = await session._gpt.send(sentence);
+                        newMessage.reply(response!, false);
+                    }
                     break;
                     case CommandType.TEST:
                         session._musicPlayer.testCommand(newMessage);
@@ -252,8 +265,30 @@ export default class Sona
                 session._musicPlayer.autoRandomPlayCommand(new Message(interaction));
             }
         }
+        const AskGPT: Command = {
+            name: "gpt",
+            description: "GPT에게 질문합니다.",
+            nameLocalizations: {
+                "en-US": "gpt", 
+                "ko": "지피티", 
+            }, 
+            options: [
+                {
+                    type: DiscordJS.ApplicationCommandOptionType.String,
+                    name: 'content',
+                    description: '입력값',
+                    required: true,
+                },
+            ],
+            run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
+                await interaction.deferReply();
+                const message = new Message(interaction)
+                const response = await session._gpt.send(message.getContent());
+                message.reply(response!, false);
+            }
+        }
 
-        this._commandArr = [PlaySong, SkipSong, ListSong, RandomSong, RankSong, AutoRandomMode];
+        this._commandArr = [PlaySong, SkipSong, ListSong, RandomSong, RankSong, AutoRandomMode, AskGPT];
     }
 
     async handleSlashCommand(client: DiscordJS.Client, interaction: DiscordJS.CommandInteraction): Promise<void>
