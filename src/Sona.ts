@@ -8,11 +8,13 @@ import {CommandPrefix, DiscordToken} from './Token.json';
 
 class DiscordSession
 {
+    _guildID: DiscordJS.Snowflake;
     _musicPlayer: MusicPlayer;
     _gpt: ChatGPT;
     
     constructor(client: DiscordJS.Client, guildID: string)
     {
+        this._guildID = guildID;
         this._musicPlayer = new MusicPlayer(client, guildID);
         this._gpt = new ChatGPT();
     }
@@ -33,18 +35,35 @@ export default class Sona
     _sessionMap: Map<string, DiscordSession>;
     _commandArr: Array<Command>;
 
-    private getSession(message: Message)
+    private getSession(guildID: DiscordJS.Snowflake) : DiscordSession
     {
-        let session = this._sessionMap.get(message.getGuildID())!;
+        let session = this._sessionMap.get(guildID);
         if(!session)
         {
-            let guildID = message.getGuildID();
-            this._sessionMap.set(message.getGuildID(), new DiscordSession(this._client, guildID));
+            this._sessionMap.set(guildID, new DiscordSession(this._client, guildID));
             session = this._sessionMap.get(guildID)!;
         }
 
         return session;
     }
+
+    private async handleSlashCommand(client: DiscordJS.Client, interaction: DiscordJS.CommandInteraction): Promise<void>
+    {
+        const slashCommand = this._commandArr.find(c => c.name === interaction.commandName);
+        if (!slashCommand) {
+            interaction.followUp({ content: "An error has occurred" });
+            return;
+        }
+
+        if(!interaction.guildId)
+        {
+            interaction.followUp({ content: "An error has occurred on discord. no guildID in interaction" });
+            return;
+        }
+
+        const session = this.getSession(interaction.guildId);
+        slashCommand.run(session, interaction);
+    };
 
     constructor()
     {
@@ -60,26 +79,23 @@ export default class Sona
                 DiscordJS.Partials.Channel, 
                 DiscordJS.Partials.Message, 
             ]
-        });
-
-        this._client.on(DiscordJS.Events.ClientReady, async () => {
+        }).on(DiscordJS.Events.ClientReady, async () => {
             if (!this._client.user || !this._client.application)
                 return;
 
             await this._client.application.commands.set(this._commandArr);
             Logger.log(`${this._client.user.username} is online`);
-        });
-
-        this._client.on(DiscordJS.Events.InteractionCreate, async (interaction: DiscordJS.Interaction) => {
+        }).on(DiscordJS.Events.InteractionCreate, async (interaction: DiscordJS.Interaction) => {
             if (interaction.isCommand() || interaction.isContextMenuCommand())
                 await this.handleSlashCommand(this._client, interaction);
-        });
-
-        this._client.on("messageCreate", async (message: DiscordJS.Message) => {
+        }).on(DiscordJS.Events.MessageCreate, async (message: DiscordJS.Message) => {
             if(message.author.bot == true)
                 return;
             
             Logger.logDev("--- messageCreate ---\n", message);
+
+            if(message.guildId == null)
+                return;
 
             if(message.content.startsWith(CommandPrefix) == true)
             {
@@ -117,12 +133,12 @@ export default class Sona
                         return CommandType.COUNT;
                 }
 
-                let newMessage = new Message(message);
-                let session = this.getSession(newMessage);
+                const newMessage = new Message(message);
+                const session = this.getSession(message.guildId);
                 const commandType = getCommandType();
                 switch (commandType) {
                     case CommandType.PLAY:
-                        session._musicPlayer.playCommand(new Message(message));
+                        session._musicPlayer.playCommand(newMessage);
                     break;
                     case CommandType.SKIP:
                         session._musicPlayer.skipSongCommand();
@@ -156,20 +172,15 @@ export default class Sona
                 }                
             }
         });
-        
         if(process.env.NODE_ENV !== 'production')
         {
-            this._client.on("messageUpdate", (oldMessage, newMessage) => {
-                if(oldMessage.author!.bot == true)
-                    return;
-                else if(newMessage.author!.bot == true)
+            this._client.on(DiscordJS.Events.MessageUpdate, (oldMessage, newMessage) => {
+                if(oldMessage.author!.bot == true || newMessage.author!.bot == true)
                     return;
     
-                Logger.logDev("--- MessageUpdate ---\n", oldMessage, newMessage);
-            });
-
-            this._client.on("debug", message =>{
-                Logger.logDev("--- debug ---\n", message);
+                Logger.logDev("--- Client MessageUpdate ---\n", oldMessage, newMessage);
+            }).on(DiscordJS.Events.Debug, message =>{
+                Logger.logDev("--- Client Debug ---\n", message);
             });
         }
 
@@ -265,6 +276,19 @@ export default class Sona
                 session._musicPlayer.autoRandomPlayCommand(new Message(interaction));
             }
         }
+        const ShuffleList: Command = 
+        {
+            name: "shuffle",
+            description: "소나가 재생할 목록에 있는 노래를 Shuffle합니다. (무작위로 섞습니다)",
+            nameLocalizations: {
+                "en-US": "shuffle", 
+                "ko": "셔플", 
+            }, 
+            run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
+                await interaction.deferReply();
+                session._musicPlayer.shuffleListCommand(new Message(interaction));
+            }
+        }
         const AskGPT: Command = {
             name: "gpt",
             description: "GPT에게 질문합니다.",
@@ -287,28 +311,22 @@ export default class Sona
                 message.reply(response!, false);
             }
         }
-
-        this._commandArr = [PlaySong, SkipSong, ListSong, RandomSong, RankSong, AutoRandomMode, AskGPT];
-    }
-
-    async handleSlashCommand(client: DiscordJS.Client, interaction: DiscordJS.CommandInteraction): Promise<void>
-    {
-        const slashCommand = this._commandArr.find(c => c.name === interaction.commandName);
-        if (!slashCommand) {
-            interaction.followUp({ content: "An error has occurred" });
-            return;
-        }
-
-        if(!interaction.guildId)
+        const Test: Command = 
         {
-            interaction.followUp({ content: "An error has occurred on discord. no guildID in interaction" });
-            return;
+            name: "test",
+            description: "개발자 Test용 Command입니다.",
+            nameLocalizations: {
+                "en-US": "test", 
+                "ko": "테스트", 
+            }, 
+            run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
+                await interaction.deferReply();
+                session._musicPlayer.testCommand(new Message(interaction));
+            }
         }
 
-        let newMessage = new Message(interaction);
-        let session = this.getSession(newMessage);    
-        slashCommand.run(session, interaction);
-    };
+        this._commandArr = [PlaySong, SkipSong, ListSong, RandomSong, RankSong, AutoRandomMode, ShuffleList, AskGPT];
+    }
 
     run()
     {
@@ -317,8 +335,8 @@ export default class Sona
 
     update(deltaTime: number)
     {
-        this._sessionMap.forEach((value, key) => {
-            value.update(deltaTime);
+        this._sessionMap.forEach((session, key) => {
+            session.update(deltaTime);
         });
     }
 }

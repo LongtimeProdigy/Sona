@@ -1,18 +1,38 @@
-import Logger from './Logger'
+import Logger from './Logger';
+import Sona from './Sona';
 
-console.log(`Env: ${process.env.NODE_ENV}`);
+Logger.log(`Env: ${process.env.NODE_ENV}`);
 if(process.env.NODE_ENV === 'production')
     Logger.log("Production");
 else
     Logger.log("Development");
 
-import Sona from './Sona';
-const Application = new Sona();
-Application.run();
+function main()
+{
+    const sona = new Sona();
+    let lastUpdate : number = 0;
+    let updateInterval : NodeJS.Timer | undefined = undefined;
+    try
+    {
+        sona.run();
+        
+        lastUpdate = Date.now();
+        updateInterval = setInterval(() => {
+            let now = Date.now();
+            let deltaTime = now - lastUpdate;
+            sona.update(deltaTime);
+        });
+    }
+    catch(err)
+    {
+        Logger.error(err);
 
-let lastUpdate = Date.now();
-const updateInterval = setInterval(() => {
-    let now = Date.now();
-    let deltaTime = now - lastUpdate;
-    Application.update(deltaTime);
-}, 500);
+        lastUpdate = Date.now();
+        if(updateInterval != undefined)
+            clearInterval(updateInterval!);
+
+        return main();
+    }
+}
+
+main();

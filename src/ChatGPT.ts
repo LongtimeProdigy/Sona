@@ -3,25 +3,8 @@
 // https://stackoverflow.com/questions/75624308/openai-gpt-3-api-errors-text-does-not-exist-ts2339-prompt-does-not-exis
 
 import Logger from './Logger';
-import { Configuration, OpenAIApi, CreateChatCompletionRequest } from 'openai';
+import { Configuration, OpenAIApi } from 'openai';
 import {ChatGPTToken, ChatGPTOrganizationID} from './Token.json';
-
-// async function writeFileAutoPreparePathFile(filePath, contents)
-// {
-//     if(fs.existsSync(filePath) == false)
-//     {
-//         await fs.mkdirSync(path.dirname(filePath), {recursive : true}, function(err){
-//             if(err)
-//             {
-//                 console.log(err);
-//                 return false;
-//             } 
-//         });
-//     }
-
-//     fs.writeFileSync(filePath, contents);
-//     return true;
-// }
 
 export class ChatGPT
 {

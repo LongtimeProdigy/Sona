@@ -1,21 +1,35 @@
-import DiscordJS from 'discord.js';
-import {joinVoiceChannel, createAudioPlayer, createAudioResource, VoiceConnection, AudioPlayerStatus, AudioPlayerState, AudioPlayer, VoiceConnectionStatus} from '@discordjs/voice';
+import DiscordJS, { DiscordjsError } from 'discord.js';
+import {joinVoiceChannel, createAudioPlayer, createAudioResource, VoiceConnection, AudioPlayerStatus, AudioPlayerState, AudioPlayer, VoiceConnectionStatus, NoSubscriberBehavior} from '@discordjs/voice';
 import { Readable } from 'stream';
-import fs from 'fs';
+import fs, { writeFile } from 'fs';
 import path from 'path';
 
 import Logger from './Logger'
 import {YoutubeToken, ResourcePath, SongRankPath, SongRankPrefix} from './Token.json';
+import { text } from 'stream/consumers';
 
-const gYoutubeLink = "https://www.youtube.com/watch";
-const gYoutubeLinkVideoIDKeyword = "v";
+const gPrefixGoogleAPI: string = 'https://www.googleapis.com/youtube/v3/';
+const gYoutubeLink: string = "https://www.youtube.com/watch";
+const gYoutubeLinkVideoIDKeyword: string = "v";
 
-const gQueryPlayListMaxCount = 25;
+const gQueryPlayListMaxCount: number = 25;
 
-const gSongRankSaveIntervalSecond = 3600;
-const gDisconnectTimeoutSecond = 60;
+const gSongRankSaveIntervalSecond: number = 3600;
+const gSongHistoryMaxCount = 50;
+const gDisconnectTimeoutSecond: number = 60;
 
-let test = 0;
+function shuffle<T>(array: Array<T>)
+{
+    for (let index = array.length - 1; index > 0; index--) {
+        // 무작위 index 값을 만든다. (0 이상의 배열 길이 값)
+        const randomPosition = Math.floor(Math.random() * (index + 1));
+    
+        // 임시로 원본 값을 저장하고, randomPosition을 사용해 배열 요소를 섞는다.
+        const temporary = array[index];
+        array[index] = array[randomPosition];
+        array[randomPosition] = temporary;
+    }
+}
 
 class Queue<T>
 {
@@ -92,11 +106,13 @@ class SongInformation
 class SearchInformation
 {
     _songInformationArr: Array<SongInformation>
-    _message: DiscordJS.Message;
-    constructor(songInformation: Array<SongInformation>, message: DiscordJS.Message)
+    _textChannelID: DiscordJS.Snowflake;
+    _messageID: DiscordJS.Snowflake | undefined;
+    constructor(songInformation: Array<SongInformation>, textChannelID: DiscordJS.Snowflake, messageID: DiscordJS.Snowflake | undefined)
     {
         this._songInformationArr = songInformation;
-        this._message = message;
+        this._textChannelID = textChannelID;
+        this._messageID = messageID;
     }
 }
 
@@ -104,21 +120,13 @@ class SongPlayInformation
 {
     _songInformation: SongInformation;
     _voiceChannelID: DiscordJS.Snowflake;
-    _textChannel: DiscordJS.TextBasedChannel;
-    _guildeID: DiscordJS.Snowflake;
-    _adapterCreator: DiscordJS.InternalDiscordGatewayAdapterCreator;
+    _textChannelID: DiscordJS.Snowflake;
 
-    _errorCount: number;
-
-    constructor(songInfo: SongInformation, voiceChannelID: DiscordJS.Snowflake, textChannel: DiscordJS.TextBasedChannel, guildID: DiscordJS.Snowflake, creator: DiscordJS.InternalDiscordGatewayAdapterCreator)
+    constructor(songInfo: SongInformation, voiceChannelID: DiscordJS.Snowflake, textChannelID: DiscordJS.Snowflake)
     {
         this._songInformation = songInfo;
         this._voiceChannelID = voiceChannelID;
-        this._textChannel = textChannel;
-        this._guildeID = guildID;
-        this._adapterCreator = creator;
-
-        this._errorCount = 0;
+        this._textChannelID = textChannelID;
     }
 }
 
@@ -140,11 +148,10 @@ class VideoTitleAndDurationQueryResult
 }
 class YoutubeHelper
 {
-    static kPrefixURL: string = 'https://www.googleapis.com/youtube/v3/';
     constructor()
     {}
 
-    private static async queryVideo(queryType: VideoQueryType, videoIDArr: Array<string>)
+    private static async queryVideo(queryType: VideoQueryType, videoIDArr: Array<string>) : Promise<Array<string | undefined>>
     {
         let returnArr = Array<string | undefined>();
         let count = videoIDArr.length;
@@ -152,7 +159,7 @@ class YoutubeHelper
             return returnArr;
 
         let partName = queryType == VideoQueryType.TITLE ? "snippet" : "contentDetails";
-        let url = `${this.kPrefixURL}videos?part=${partName}&key=${YoutubeToken}&id=`;
+        let url = `${gPrefixGoogleAPI}videos?part=${partName}&key=${YoutubeToken}&id=`;
         for(var i = 0; i < count; ++i)
         {
             url += videoIDArr[i];
@@ -184,16 +191,16 @@ class YoutubeHelper
         return returnArr;
     }
 
-    static async queryVideoTitleArr(videoIDArr: Array<string>)
+    static async queryVideoTitleArr(videoIDArr: Array<string>) : Promise<Array<string | undefined>>
     {
         // https://developers.google.com/youtube/v3/docs/videos/list?hl=ko
         return await YoutubeHelper.queryVideo(VideoQueryType.TITLE, videoIDArr);
     }
 
-    static async queryVideoDurationArr(videoIDArr: Array<string>)
+    static async queryVideoDurationArr(videoIDArr: Array<string>) : Promise<Array<number | undefined>>
     {
         // https://developers.google.com/youtube/v3/docs/videos/list?hl=ko
-        let durationArr = await YoutubeHelper.queryVideo(VideoQueryType.DURATION, videoIDArr);
+        let durationArr: Array<string | undefined> = await YoutubeHelper.queryVideo(VideoQueryType.DURATION, videoIDArr);
         
         function YTDurationToSeconds(duration: string) : number
         {
@@ -214,14 +221,14 @@ class YoutubeHelper
         // query에서 이미 durationArr의 index와 videoIDArr의 index가 서로 정렬되어 있습니다.
         // 만약 정렬되지 않는다면 여리서 정렬해야합니다.
 
-        let secondArr = durationArr.map((value: string | undefined) => {
+        let secondArr: Array<number | undefined> = durationArr.map((value: string | undefined) => {
             return value == undefined ? undefined : YTDurationToSeconds(value);
         });
 
         return secondArr;
     }
 
-    static async queryVideoTitleAndDuration(videoIDArr: Array<string>)
+    static async queryVideoTitleAndDuration(videoIDArr: Array<string>) : Promise<Array<VideoTitleAndDurationQueryResult>>
     {
         let tempVideoIDArr = videoIDArr.slice();
         let titleArr = await this.queryVideoTitleArr(tempVideoIDArr);
@@ -256,7 +263,7 @@ class YoutubeHelper
         return returnArr;
     }
 
-    static createSongInformation(idArr: Array<string>, titleArr: Array<string>, durationArr: Array<number>)
+    private static createSongInformation(idArr: Array<string>, titleArr: Array<string>, durationArr: Array<number>) : Array<SongInformation>
     {
         let songInformationArr: Array<SongInformation> = [];
         if((idArr.length != durationArr.length) || (titleArr.length != durationArr.length))
@@ -271,51 +278,62 @@ class YoutubeHelper
         return songInformationArr;
     }
 
-    static async queryKeyword(keyword : string)
+    static async queryKeyword(keyword : string) : Promise<Array<SongInformation>>
     {
-        let idArr = [];
-        let titleArr = [];
+        let attributeArr = [
+            'part=snippet', // id, snippet
+            'q=' + keyword, 
+            //'order=relevance' // default=relevance, [date, rating, relevance, title, videoCount, viewCount]
+            'regionCode=kr', 
+            'maxResults=10', // default=5, 0~50
+            'type=video', //channel, playlist, video
+            //'videoDuration=any' + default: any, [any, long(20분), medium(4~20), short(4)]
+        ];
+        let url = gPrefixGoogleAPI + 'search?' + 'key=' + YoutubeToken;
+        for(const attr of attributeArr)
         {
-            let attributeArr = [
-                'part=snippet', // id, snippet
-                'q=' + keyword, 
-                //'order=relevance' // default=relevance, [date, rating, relevance, title, videoCount, viewCount]
-                'regionCode=kr', 
-                'maxResults=10', // default=5, 0~50
-                'type=video', //channel, playlist, video
-                //'videoDuration=any' + default: any, [any, long(20분), medium(4~20), short(4)]
-            ];
-            let url = this.kPrefixURL + 'search?' + 'key=' + YoutubeToken;
-            for(const attr of attributeArr)
-            {
-                url += '&';
-                url += attr
-            }
-    
-            let res = await fetch(url);
-            let body = await res.text();
+            url += '&';
+            url += attr
+        }
+
+        let res: Array<SongInformation> = await fetch(url)
+        .then(async (response) => {
+            let body = await response.text();
             let obj = JSON.parse(body);
+    
+            let idArr = [];
+            let titleArr = [];
             for(const item of obj['items'])
             {
                 idArr.push(item['id']['videoId']);
                 titleArr.push(item['snippet']['title']);
             }
-        }
+    
+            // 방금 위에서 검색한 ID이므로 실패할 일이 없다고 가정합니다.
+            let durationArr = await YoutubeHelper.queryVideoDurationArr(idArr) as Array<number>;
+            return YoutubeHelper.createSongInformation(idArr, titleArr, durationArr);
+        })
+        .catch((error: string) => {
+            Logger.error(error);
+            let emptySongInformationArr: Array<SongInformation> = [];
+            return emptySongInformationArr;
+        });
 
-        // 방금 위에서 검색한 ID이므로 실패할 일이 없다고 가정합니다.
-        let durationArr = await YoutubeHelper.queryVideoDurationArr(idArr) as Array<number>;
-        return YoutubeHelper.createSongInformation(idArr, titleArr, durationArr);
+        return res;
     }
 
-    static async queryPlayList(listID: string)
+    static async queryPlayList(listID: string) : Promise<Array<SongInformation>>
     {
         // https://developers.google.com/youtube/v3/docs/playlistItems/list?hl=ko
-        let url = `${YoutubeHelper.kPrefixURL}playlistItems?part=snippet&key=${YoutubeToken}&playlistId=${listID}&maxResults=${gQueryPlayListMaxCount}`;
+        let url = `${gPrefixGoogleAPI}playlistItems?part=snippet&key=${YoutubeToken}&playlistId=${listID}&maxResults=${gQueryPlayListMaxCount}`;
         let res = await fetch(url);
         let body = await res.text();
         let obj = JSON.parse(body);
         if("error" in obj)
+        {
+            Logger.error(obj["error"]);
             return [];
+        }
 
         let idArr: Array<string> = [];
         let titleArr: Array<string> = [];
@@ -334,13 +352,6 @@ class YoutubeHelper
     }
 }
 
-enum PlayCommandType
-{
-    SEARCH, 
-    PLAYSEARCH,
-    PLAYLINKLIST, 
-    PLAYLINKVEDIO, 
-}
 export class Message
 {
     _target: DiscordJS.CommandInteraction | DiscordJS.Message;
@@ -350,81 +361,83 @@ export class Message
         this._target = target;
     }
 
-    getPlayCommandType()
+    getContent() : string
     {
-        let content = this.getContent();
-
-        if(isNaN(Number(content)) == false && typeof(Number(content)) == "number")
-            return PlayCommandType.PLAYSEARCH;
-        else if(content.includes(`${gYoutubeLink}`) == true)
+        if(this._target instanceof DiscordJS.CommandInteraction)
         {
-            if(content.includes('list='))
-                return PlayCommandType.PLAYLINKLIST;
-            else
-                return PlayCommandType.PLAYLINKVEDIO;
-        }
-        else
-            return PlayCommandType.SEARCH;
-    }
-
-    getVoiceChannel()
-    {
-        if(this._target instanceof DiscordJS.CommandInteraction)
-            return (this._target.member as DiscordJS.GuildMember).voice.channel;
-        else
-            return this._target.member!.voice.channel;
-    }
-
-    async reply(sentence: string, deleteMessage: boolean)
-    {
-        if(this._target instanceof DiscordJS.CommandInteraction)
-            return await this._target.followUp({ephemeral: true, content: sentence});
-        else
-        {
-            if(deleteMessage)
-            {
-                await this._target.delete();
-                return await this._target.channel.send(sentence);
-            }
-            else
-                return await this._target.reply(sentence);
-        }
-    }
-
-    getContent()
-    {
-        if(this._target instanceof DiscordJS.CommandInteraction)
             return this._target.options.get('content')?.value as string;
-        else
+        }
+        else if(this._target instanceof DiscordJS.Message)
         {
             if(isNaN(Number(this._target.content.slice(1))) == false)
                 return this._target.content.slice(1);
             else
                 return this._target.content.slice(3);
         }
+
+        Logger.error(`getContent: 올바르지 않은 MessageType(${typeof(this._target)}))입니다.`);
+        return "";
     }
 
-    getUserID()
+    getVoiceChannel() : DiscordJS.VoiceBasedChannel | null
+    {
+        if(this._target instanceof DiscordJS.CommandInteraction)
+            return (this._target.member as DiscordJS.GuildMember).voice.channel;
+        else if(this._target instanceof DiscordJS.Message)
+            return this._target.member!.voice.channel;
+
+        Logger.error(`getVoiceChannel: 올바르지 않은 MessageType(${typeof(this._target)}))입니다.`);
+        return null;
+    }
+
+    getUserID() : string | undefined
     {
         if(this._target instanceof DiscordJS.CommandInteraction)
             return this._target.user.id;
-        else
+        else if(this._target instanceof DiscordJS.Message)
             return this._target.author.id;
+
+        Logger.error(`getUserID: 올바르지 않은 MessageType(${typeof(this._target)}))입니다.`);
+        return undefined;
     }
 
-    getTextChannel()
+    getTextChannelID() : string | undefined
     {
-        return this._target.channel!;
+        if(this._target.channel == null)
+            return undefined
+        return this._target.channel.id;
     }
 
-    getGuildID()
+    getGuildID() : string | undefined
     {
-        return this._target.guildId!;
+        if(this._target.guildId == null)
+            return undefined;
+        return this._target.guildId;
     }
 
-    getVoiceAdapterCreator()
+    async reply(sentence: string, deleteMessage: boolean) : Promise<DiscordJS.Snowflake | undefined>
     {
-        return this._target.guild!.voiceAdapterCreator;
+        if(this._target instanceof DiscordJS.CommandInteraction)
+        {
+            return (await this._target.followUp({ephemeral: true, content: sentence})).id;
+        }
+        else if(this._target instanceof DiscordJS.Message)
+        {
+            if(deleteMessage)
+            {
+                await this._target.delete();
+                await this._target.channel.send(sentence);
+                return undefined;
+            }
+            else
+            {
+                let replyMessage = await this._target.reply(sentence);
+                return replyMessage.id;
+            }
+        }
+
+        Logger.error(`reply: 올바르지 않은 MessageType(${typeof(this._target)}))입니다.`);
+        return undefined;
     }
 }
 
@@ -450,7 +463,7 @@ export class MusicPlayer
         this._guildID = guildID;
 
         this._autoRandomPlay = false;
-        this._songHistory = new MaxQueue(50);
+        this._songHistory = new MaxQueue(gSongHistoryMaxCount);
         this._searchMap = new Map<string, SearchInformation>();
         this._songList = new Array<SongPlayInformation>;
         this._connection = undefined;
@@ -470,84 +483,180 @@ export class MusicPlayer
         this._songRankInformationMap = new Map(Object.entries(loadObj));
 
         this._songRankSaveInterval = setInterval(() => {
-            Logger.logDev("--- Save Song Rank Information ---");
             let sentence = Object.fromEntries(this._songRankInformationMap);
-            fs.writeFileSync(rankFilePath, JSON.stringify(sentence));
+            fs.writeFile(rankFilePath, JSON.stringify(sentence), "utf8", (err) => {
+                if(err)
+                    Logger.error(err);
+                else
+                    Logger.logDev("Success FileWrite SongRank");
+            });
         }, 1000 * gSongRankSaveIntervalSecond);
+    }
+
+    private getGuild() : DiscordJS.Guild
+    {
+        const guild = this._client.guilds.cache.get(this._guildID);
+        if(guild == undefined)
+            Logger.error(`사라진 Guild의 Session은 존재하면 안됩니다!! 반드시 수정해야함!`);
+
+        return guild!;
+    }
+    private getChannelByID(channelID : DiscordJS.Snowflake) : DiscordJS.BaseChannel | undefined
+    {
+        const guild = this.getGuild();
+        return guild.channels.cache.get(channelID);
+    }
+    private getVoiceChannelByID(channelID : DiscordJS.Snowflake) : DiscordJS.VoiceBasedChannel | undefined
+    {
+        const channel = this.getChannelByID(channelID);
+        if(channel == undefined)
+            return undefined;
+        if(channel.isVoiceBased() == false)
+            return undefined;
+
+        return channel as DiscordJS.VoiceBasedChannel;
+    }
+    private getTextChannelByID(channelID : DiscordJS.Snowflake) : DiscordJS.TextBasedChannel | undefined
+    {
+        const channel = this.getChannelByID(channelID);
+        if(channel == undefined)
+            return undefined;
+        if(channel.isTextBased() == false)
+            return undefined;
+
+        return channel as DiscordJS.TextBasedChannel;
+    }
+    private getMessageByID(channelID : DiscordJS.Snowflake, messageID : DiscordJS.Snowflake | undefined) : DiscordJS.Message | undefined
+    {
+        if(messageID == undefined)
+            return undefined;
+
+        const textChannel = this.getTextChannelByID(channelID);
+        if(textChannel == undefined)
+            return undefined;
+
+        return textChannel.messages.cache.get(messageID);
     }
 
     update(deltaTime: number) : void
     {
-        if(this._currentPlayingSongInformation?._voiceChannelID == undefined)
+        if(this._currentPlayingSongInformation == undefined || this._currentPlayingSongInformation._voiceChannelID == undefined)
             return;
 
-        const voiceChannel = this._client.guilds.cache.get(this._guildID)?.channels.cache.get(this._currentPlayingSongInformation._voiceChannelID) as DiscordJS.VoiceBasedChannel;
+        const voiceChannel = this.getVoiceChannelByID(this._currentPlayingSongInformation._voiceChannelID);
+        if(voiceChannel == undefined)
+            return;
+
         if(voiceChannel.members.size == 1)  // 1명 >> Sona 자기자신만 있는 경우
             this.disconnect();
     }
 
-    private checkVoiceChannel(voiceChannel: DiscordJS.VoiceBasedChannel | null)
+    private isValidVoiceChannel(voiceChannel: DiscordJS.VoiceBasedChannel | null) : boolean
     {
-        return !(voiceChannel == undefined || voiceChannel.type != DiscordJS.ChannelType.GuildVoice);
+        return voiceChannel != null && voiceChannel != undefined && voiceChannel.type == DiscordJS.ChannelType.GuildVoice;
     }
 
-    async playCommand(message: Message)
+    async playCommand(message: Message) : Promise<void>
     {
+        Logger.logDev("MusicPlayer PlayCommand");
+
         const voiceChannel = message.getVoiceChannel();
-        if(this.checkVoiceChannel(voiceChannel) == false)
+        if(this.isValidVoiceChannel(voiceChannel) == false)
         {
             await message.reply("먼저 VoiceChannel에 입장해주세요.", true);
             return;
         }
 
+        const userID = message.getUserID();
+        if(userID == undefined)
+            return;
+
+        const textChannelID = message.getTextChannelID();
+        if(textChannelID == undefined)
+            return;
+
+        enum PlayCommandType
+        {
+            SEARCH, 
+            SEARCHPLAY,
+            PLAYLINKLIST, 
+            PLAYLINKVEDIO, 
+        }
+        function getPlayCommandType(content : string) : PlayCommandType
+        {
+            if(typeof(Number(content)) == "number" && isNaN(Number(content)) == false)
+                return PlayCommandType.SEARCHPLAY;
+            else if(content.includes(`${gYoutubeLink}`) == true)
+            {
+                if(content.includes('list='))
+                    return PlayCommandType.PLAYLINKLIST;
+                else
+                    return PlayCommandType.PLAYLINKVEDIO;
+            }
+            else
+                return PlayCommandType.SEARCH;
+        }
+
         const content = message.getContent();
-        const playCommandType = message.getPlayCommandType();
+        const playCommandType = getPlayCommandType(content);
         switch (playCommandType) {
             case PlayCommandType.SEARCH:
             {
-                let searchInfo = this._searchMap.get(message.getUserID());
+                const searchInfo = this._searchMap.get(userID);
                 if(searchInfo != undefined)
-                    searchInfo!._message.delete();
+                {
+                    const msg = this.getMessageByID(searchInfo._textChannelID, searchInfo._messageID);
+                    msg?.delete();
+                }
 
-                let songInfoArr: Array<SongInformation> = await YoutubeHelper.queryKeyword(content);
-
-                let sentence = `${content} 검색결과\n`;
-                for(let i = 0; i < songInfoArr.length; ++i)
-                    sentence += `${i + 1}. ${songInfoArr[i]._title}(${songInfoArr[i].getSongDurationString()})\n`;
-
-                let reply = await message.reply(sentence, false);
-                this._searchMap.set(message.getUserID(), new SearchInformation(songInfoArr, reply));
+                let songInfoArrData = await YoutubeHelper.queryKeyword(content);
+                if(songInfoArrData.length == 0)
+                {
+                    let sentence = `검색도중 에러가 발생했습니다. 로그를 확인해야합니다.`;
+                    await message.reply(sentence, false);
+                }
+                else
+                {
+                    let sentence = `${content} 검색결과\n`;
+                    for(let i = 0; i < songInfoArrData.length; ++i)
+                        sentence += `${i + 1}. ${songInfoArrData[i]._title}(${songInfoArrData[i].getSongDurationString()})\n`;
+    
+                    const replyMessageID = await message.reply(sentence, false);
+                    this._searchMap.set(userID, new SearchInformation(songInfoArrData, textChannelID, replyMessageID));
+                }
             }
             return;
-            case PlayCommandType.PLAYSEARCH:
+            case PlayCommandType.SEARCHPLAY:
             {
-                const userID = message.getUserID();
                 const searchInfo = this._searchMap.get(userID);
-                if(!searchInfo)
+                if(searchInfo == undefined)
                 {
                     await message.reply("노래찾기를 먼저 해주세요.", true);
                     return;
                 }
-                this._searchMap.delete(userID);
 
                 const songIndex = Number(content) - 1;
                 if(songIndex < 0 || songIndex >= searchInfo._songInformationArr.length)
                 {
-                    await message.reply("올바른 Index를 입력해주세요. 0보다 작거나 검색범위 밖입니다.", false);
+                    await message.reply(`검색범위(${0}~${searchInfo._songInformationArr.length}) 밖입니다.`, false);
                     return;
                 }
 
-                this._songList.push(new SongPlayInformation(searchInfo._songInformationArr[songIndex], voiceChannel!.id, message.getTextChannel(), message.getGuildID(), message.getVoiceAdapterCreator()));
+                this._searchMap.delete(userID);
+
+                this._songList.push(new SongPlayInformation(searchInfo._songInformationArr[songIndex], voiceChannel!.id, textChannelID));
+
+                const msg = this.getMessageByID(searchInfo._textChannelID, searchInfo._messageID);
+                msg?.delete();
+
                 await message.reply(`${searchInfo._songInformationArr[songIndex]._title}(${searchInfo._songInformationArr[songIndex].getSongDurationString()}) 노래가 추가되었습니다.`, true);
-                await searchInfo._message.delete();
             }
             break;
             case PlayCommandType.PLAYLINKLIST:
             {
-                let temp = content.split('list=')[1];
-                let listID = temp.split('&')[0];
-                let songInfoArr = await YoutubeHelper.queryPlayList(listID);
-                let songInfoCount = songInfoArr.length;
+                const listID = content.split('list=')[1].split('&')[0];
+                const songInfoArr = await YoutubeHelper.queryPlayList(listID);
+                const songInfoCount = songInfoArr.length;
                 if(songInfoCount == 0)
                 {
                     await message.reply("PlayList가 올바르지 않습니다.", true);
@@ -555,17 +664,16 @@ export class MusicPlayer
                 }
 
                 for(let i = 0; i < songInfoCount; ++i)
-                    this._songList.push(new SongPlayInformation(songInfoArr[i], voiceChannel!.id, message.getTextChannel(), message.getGuildID(), message.getVoiceAdapterCreator()));
+                    this._songList.push(new SongPlayInformation(songInfoArr[i], voiceChannel!.id, textChannelID));
 
                 await message.reply(`총 ${songInfoCount}개의 노래가 추가되었습니다.`, true);
             }
             break;
             case PlayCommandType.PLAYLINKVEDIO:
             {
-                const temp = content.split(`${gYoutubeLinkVideoIDKeyword}=`);
-                const videoID = temp[1].split(`&`)[0];
+                const videoID = content.split(`${gYoutubeLinkVideoIDKeyword}=`)[1].split(`&`)[0];
 
-                let titleAndDurationArr = await YoutubeHelper.queryVideoTitleAndDuration([videoID]);
+                const titleAndDurationArr = await YoutubeHelper.queryVideoTitleAndDuration([videoID]);
                 if(titleAndDurationArr.length == 0)
                 {
                     await message.reply(`노래의 Duration을 가져오지 못했습니다. VideoID${videoID}가 올바른지 확인해주세요.`, true);
@@ -573,13 +681,17 @@ export class MusicPlayer
                 }
 
                 const songInfo = new SongInformation(videoID, titleAndDurationArr[0]._title, titleAndDurationArr[0]._duration);
-                const newSong = new SongPlayInformation(songInfo, voiceChannel!.id, message.getTextChannel(), message.getGuildID(), message.getVoiceAdapterCreator());
+                const newSong = new SongPlayInformation(songInfo, voiceChannel!.id, textChannelID);
                 this._songList.push(newSong);
+
                 await message.reply(`${newSong._songInformation._title}(${newSong._songInformation.getSongDurationString()}) 노래가 추가되었습니다.`, true);
             }
             break;
             default:
-                Logger.error(`비정상적 PlayCommandType${PlayCommandType}입니다. 개발자에게 알려주세요.`);
+            {
+                Logger.error(`비정상적 PlayCommandType(${PlayCommandType})입니다. 개발자에게 알려주세요.`);
+                await message.reply(`비정상적 PlayCommandType(${PlayCommandType})입니다. 개발자에게 알려주세요.`, true);
+            }
             return;
         }
         
@@ -590,13 +702,17 @@ export class MusicPlayer
 
     async skipSongCommand()
     {
+        Logger.logDev("MusicPlayer SkipSong");
+
         this._player?.stop();
     }
 
     async listSongCommand(message: Message)
     {
+        Logger.logDev("MusicPlayer ListSong");
+
         if(this._songList.length == 0)
-            message.reply("재생목록이 비었습니다.", true);
+            await message.reply("재생목록이 비었습니다.", true);
         else
         {
             let sentence = `Count: ${this._songList.length}` + "```";
@@ -616,7 +732,7 @@ export class MusicPlayer
             }
             sentence += "```";
 
-            message.reply(sentence, true);
+            await message.reply(sentence, true);
         }
     }
 
@@ -638,18 +754,6 @@ export class MusicPlayer
                 percentageArr.push(i);
         }
 
-        function shuffle<T>(array: Array<T>)
-        {
-            for (let index = array.length - 1; index > 0; index--) {
-                // 무작위 index 값을 만든다. (0 이상의 배열 길이 값)
-                const randomPosition = Math.floor(Math.random() * (index + 1));
-            
-                // 임시로 원본 값을 저장하고, randomPosition을 사용해 배열 요소를 섞는다.
-                const temporary = array[index];
-                array[index] = array[randomPosition];
-                array[randomPosition] = temporary;
-            }
-        }
         shuffle(percentageArr);
 
         let randomVideoIDArr = Array<string>();
@@ -718,22 +822,13 @@ export class MusicPlayer
 
         return output;
     }
-
     private async randomSongInternal(count: number)
     {
         return this.randomSongInternal2(count, {videoIDArr: Array<string>(), titleArr: Array<string>(), durationArr: Array<number>()}, 0);
     }
-
     async randomSongCommand(message: Message, count: number)
     {
-        Logger.logDev("--- Random Song ---");
-
-        const voiceChannel = message.getVoiceChannel();
-        if(this.checkVoiceChannel(voiceChannel!) == false)
-        {
-            await message.reply("먼저 VoiceChannel에 입장해주세요.", true);
-            return;
-        }
+        Logger.logDev("MusicPlayer RandomSong");
 
         if(this._songRankInformationMap.size == 0)
         {
@@ -741,11 +836,25 @@ export class MusicPlayer
             return;
         }
 
+        const voiceChannel = message.getVoiceChannel();
+        if(this.isValidVoiceChannel(voiceChannel) == false)
+        {
+            await message.reply("먼저 VoiceChannel에 입장해주세요.", true);
+            return;
+        }
+
+        const textChannelID = message.getTextChannelID();
+        if(textChannelID == undefined)
+        {
+            await message.reply("Message가 작성된 TextChannel이 없다...? 이거 답장은 가나...?", true);
+            return;
+        }
+
         let output = await this.randomSongInternal(count);
         for(let i = 0; i < output.videoIDArr.length; ++i)
         {
             const songInfo = new SongInformation(output.videoIDArr[i], output.titleArr[i], output.durationArr[i]);
-            this._songList.push(new SongPlayInformation(songInfo, voiceChannel!.id, message.getTextChannel(), message.getGuildID(), message.getVoiceAdapterCreator()));
+            this._songList.push(new SongPlayInformation(songInfo, voiceChannel!.id, textChannelID));
         }
 
         await message.reply(`${output.videoIDArr.length}개의 랜덤 노래가 추가되었습니다.`, true);
@@ -756,6 +865,8 @@ export class MusicPlayer
 
     async rankSongCommand(message: Message)
     {
+        Logger.logDev("MusicPlayer RankSong");
+
         if(this._songRankInformationMap.size == 0)
         {
             await message.reply("노래 랭킹이 없습니다. 음악을 들어주세요.", true);
@@ -793,11 +904,20 @@ export class MusicPlayer
         }
         sentence += "```";
 
-        message.reply(sentence, true);
+        await message.reply(sentence, true);
     }
 
     async autoRandomPlayCommand(message: Message)
     {
+        Logger.logDev("MusicPlayer AutoRandomPlayMode");
+
+        const voiceChannel = message.getVoiceChannel();
+        if(this.isValidVoiceChannel(voiceChannel) == false)
+        {
+            await message.reply("Voicechannel에 먼저 입장해주세요.", true);
+            return;
+        }
+
         this._autoRandomPlay = !this._autoRandomPlay;
         if(this._autoRandomPlay == false)
         {
@@ -806,21 +926,25 @@ export class MusicPlayer
         }
 
         await message.reply("자동재생 모드로 변경되었습니다.", true);
+
+        const textChannelID = message.getTextChannelID();
+        if(textChannelID == undefined)
+        {
+            await message.reply("Message가 작성된 TextChannel이 없다...? 이거 답장은 가나...?", true);
+            return;
+        }
+        
         if(this._currentPlayingSongInformation == undefined)
         {
             let output = await this.randomSongInternal(1);
             for(let i = 0; i < output.videoIDArr.length; ++i)
             {
                 const songInfo = new SongInformation(output.videoIDArr[i], output.titleArr[i], output.durationArr[i]);
-                this._songList.push(new SongPlayInformation(songInfo, message.getVoiceChannel()!.id, message.getTextChannel(), message.getGuildID(), message.getVoiceAdapterCreator()));
+                this._songList.push(new SongPlayInformation(songInfo, voiceChannel!.id, textChannelID));
             }
 
             this.nextSong();
         }
-    }
-
-    async testCommand(message: Message)
-    {
     }
 
     /*
@@ -828,15 +952,40 @@ export class MusicPlayer
     */
     private async playSong(songPlayInfo: SongPlayInformation)
     {
-        Logger.logDev("--- Play Song ---");
+        Logger.logDev("MusicPlayer PlaySong");
 
         this.clearDisconnectTimeout();
 
         if(this._connection == undefined)
         {
-            Logger.logDev("--- Create Connection ---");
-            this._connection = await this.joinVoiceChannel(songPlayInfo._voiceChannelID, songPlayInfo._guildeID, songPlayInfo._adapterCreator);
+            const guild = this.getGuild();
 
+            this._connection = joinVoiceChannel({
+                channelId: songPlayInfo._voiceChannelID, 
+                guildId: this._guildID, 
+                adapterCreator: guild.voiceAdapterCreator
+            });
+    
+            this._connection.on("error", error => {
+                Logger.error("--- CN Error ---\n", error);
+            })
+            .on(VoiceConnectionStatus.Ready, () => {
+                Logger.logDev("--- CN Ready ---");
+            })
+            .on(VoiceConnectionStatus.Connecting, () => {
+                Logger.logDev("--- CN Connecting ---");
+            })
+            .on(VoiceConnectionStatus.Signalling, () => {
+                Logger.logDev("--- CN Signaling ---");
+            })
+            .on(VoiceConnectionStatus.Disconnected, () => {
+                Logger.logDev("--- CN Disconnected ---");
+                this.disconnect();  // 관리자가 억지로 Sona를 '우클릭 연결 끊기'하는 경우
+            })
+            .on(VoiceConnectionStatus.Destroyed, () => {
+                Logger.logDev("--- CN Destroyed ---");
+            });
+            
             if(process.env.NODE_ENV !== 'production')
             {
                 this._connection.on("debug", message =>{
@@ -847,40 +996,39 @@ export class MusicPlayer
 
         if(this._player == undefined)
         {
-            Logger.logDev("--- Create AudioPlayer ---");
-
-            this._player = createAudioPlayer();
-            this._player.on('error', error => {
-                Logger.logDev('--- MP Error ---\n', error);
-
-                if(this._currentPlayingSongInformation!._errorCount >= 3)
-                {
-                    this.nextSong();
-                    return;
+            this._player = createAudioPlayer({
+                behaviors: {
+                    noSubscriber: NoSubscriberBehavior.Play
                 }
-
-                // 오류가 났다면 현재 재생중인 곡을 다시 재생합니다.
-                ++this._currentPlayingSongInformation!._errorCount;
-                this._currentPlayingSongInformation!._textChannel.send(`${this._currentPlayingSongInformation!._songInformation._title}) 재생 오류로 다시 재생합니다.`);
-                this.playSong(this._currentPlayingSongInformation!);
-            })
-            .on(AudioPlayerStatus.Idle, (oldState: AudioPlayerState, newState: AudioPlayerState) => {
+            });
+            this._player.on(AudioPlayerStatus.Idle, (oldState: AudioPlayerState, newState: AudioPlayerState) => {
                 Logger.logDev('--- MP State Change ---');
 
                 if(oldState.status == AudioPlayerStatus.Playing && newState.status == AudioPlayerStatus.Idle)
                 {
-                    const id = this._currentPlayingSongInformation!._songInformation._id;
-                    let playCount = this._songRankInformationMap.get(id);
-                    if(playCount == undefined)
-                        this._songRankInformationMap.set(id, 1);
+                    const textChannel = this.getTextChannelByID(this._currentPlayingSongInformation!._textChannelID);
+                    if(this._currentPlayingSongInformation == undefined)
+                    {
+                        textChannel?.send(`MP State Change: currentPlayingSongInformation이 없으면 안되는데.. 없는 것으로 추정됩니다. 반드시 개발자에게 통보요망`);
+                    }
                     else
-                        this._songRankInformationMap.set(id, playCount + 1);
-
-                    this._songHistory.enqueue(id);
+                    {
+                        const id = this._currentPlayingSongInformation!._songInformation._id;
+                        let playCount = this._songRankInformationMap.get(id);
+                        if(playCount == undefined)
+                            this._songRankInformationMap.set(id, 1);
+                        else
+                            this._songRankInformationMap.set(id, playCount + 1);
+    
+                        this._songHistory.enqueue(id);
+                    }
                     
                     this.nextSong();
                 }
-            });
+            }).on('error', error => {
+                Logger.error('--- MP Error ---\n', error);
+            })
+            ;
 
             if(process.env.NODE_ENV !== 'production')
             {
@@ -892,128 +1040,111 @@ export class MusicPlayer
 
         async function createAudioStream(info: SongPlayInformation)
         {
-            if(false)
-            {
-                //https://velog.io/@tan90/youtube-dl
-                /**
-                 * 1. Video가 있는 Youtube HTML 가져오기
-                 * 2. HTML에서 ytInitialPlayerResponse를 JSON로 만들기
-                 * 3. JSON에서 streamingData.formats로 접근
-                 * 4. 다음 분기를 따른다.
-                 *  4-1. url이 있다면 url을 그냥 GET하면 동영상이 넘어온다.
-                 *  4-2. url이 없는 경우 signatureChiper가 대신 있을 것
-                 *      4-2-1. HTML에 base.js를 보면 복호화 코드가 있다.
-                 *      4-2-2. 이 곳에 signatureChiper을 넣으면 복호화된 URL이 새로나온다.
-                 *      4-2-3. 
-                 */
-                const html = await (await fetch(`${gYoutubeLink}?${gYoutubeLinkVideoIDKeyword}=Za9pOxEGqWU`)).text();
-                const matches = html.match(/ytInitialPlayerResponse\s*=\s*({.+?})\s*;\s*(?:var\s+meta|<\/script|\n)/);
-                const json = JSON.parse(matches![1]);
-                if('url' in json.streamingData.formats)
-                    Logger.logDev('url: ', json.streamingData.formats.url);
-                else if('signatureCipher' in json.streamingData.formats)
-                    Logger.logDev('signatureCipher: ', json.streamingData.formats.signatureCipher);
-                else
-                    Logger.logDev('There is no sourceURL!');
+            // 자체제작
+            // {
+            //     //https://velog.io/@tan90/youtube-dl
+            //     /**
+            //      * 1. Video가 있는 Youtube HTML 가져오기
+            //      * 2. HTML에서 ytInitialPlayerResponse를 JSON로 만들기
+            //      * 3. JSON에서 streamingData.formats로 접근
+            //      * 4. 다음 분기를 따른다.
+            //      *  4-1. url이 있다면 url을 그냥 GET하면 동영상이 넘어온다.
+            //      *  4-2. url이 없는 경우 signatureChiper가 대신 있을 것
+            //      *      4-2-1. HTML에 base.js를 보면 복호화 코드가 있다.
+            //      *      4-2-2. 이 곳에 signatureChiper을 넣으면 복호화된 URL이 새로나온다.
+            //      *      4-2-3. 
+            //      */
+            //     const html = await (await fetch(`${gYoutubeLink}?${gYoutubeLinkVideoIDKeyword}=Za9pOxEGqWU`)).text();
+            //     const matches = html.match(/ytInitialPlayerResponse\s*=\s*({.+?})\s*;\s*(?:var\s+meta|<\/script|\n)/);
+            //     const json = JSON.parse(matches![1]);
+            //     if('url' in json.streamingData.formats)
+            //         Logger.logDev('url: ', json.streamingData.formats.url);
+            //     else if('signatureCipher' in json.streamingData.formats)
+            //         Logger.logDev('signatureCipher: ', json.streamingData.formats.signatureCipher);
+            //     else
+            //         Logger.logDev('There is no sourceURL!');
 
-                // function decipher(a: any) {
-                //     var b = {
-                //         credentials: "include",
-                //         cache: "no-store"
-                //     };
-                //     Object.assign(b, this.Y);
-                //     this.B && (b.signal = this.B.signal);
-                //     a = new Request(a,b);
-                //     fetch(a).then(this.oa, this.onError).then(void 0, gy)
-                // }
+            //     // function decipher(a: any) {
+            //     //     var b = {
+            //     //         credentials: "include",
+            //     //         cache: "no-store"
+            //     //     };
+            //     //     Object.assign(b, this.Y);
+            //     //     this.B && (b.signal = this.B.signal);
+            //     //     a = new Request(a,b);
+            //     //     fetch(a).then(this.oa, this.onError).then(void 0, gy)
+            //     // }
 
-                return new Readable();
-            }
-            else if(true)
+            //     return new Readable();
+            // }
+                
+            // File에서 읽기
+            // {
+            //     let fs = await import('fs');
+            //     const stream = fs.createReadStream('../Sona/resource/cupid.mp3');
+            //     return stream;
+            // }
+
+            // YTDL
+            // {
+            //     const url = `${gYoutubeLink}?${gYoutubeLinkVideoIDKeyword}=${info._songInformation._id}`;
+            //     const {default: YTDL} = await import(`ytdl-core`);
+            //     const stream = await YTDL(url, {
+            //         filter: "audioonly", 
+            //         quality: "highestaudio", 
+            //         highWaterMark: 1 << 25, 
+            //     });
+            //     return stream;
+            // }
+
+            // play-dl
             {
                 const url = `${gYoutubeLink}?${gYoutubeLinkVideoIDKeyword}=${info._songInformation._id}`;
-                const {default: YTDL} = await import(`ytdl-core`);
-                const stream = await YTDL(url, {
-                    filter: "audioonly", 
-                    quality: "highestaudio", 
-                    highWaterMark: 1 << 25, 
-                });
-                return stream;
-            }
-            else
-            {
-                let fs = await import('fs');
-                const stream = fs.createReadStream('../Sona/resource/cupid.mp3');
+                const playDL = await import(`play-dl`);
+                const stream = await playDL.stream(url);
                 return stream;
             }
         }
 
         const readStream = await createAudioStream(songPlayInfo);
-        const resource = createAudioResource(readStream);
+        const resource = createAudioResource(readStream.stream, {inputType: readStream.type});
         this._connection.subscribe(this._player);
         this._player.play(resource);
 
         this._currentPlayingSongInformation = songPlayInfo;
 
-        this._currentPlayingSongInformation!._textChannel.send(`${this._currentPlayingSongInformation!._songInformation._title}(${this._currentPlayingSongInformation!._songInformation.getSongDurationString()}) 노래를 재생합니다.`);
-        Logger.logDev(`--- Play: ${this._currentPlayingSongInformation!._songInformation._title}`);
-    }
-
-    private async joinVoiceChannel(voiceChannelID: string, guildID: string, adapterCreator: DiscordJS.InternalDiscordGatewayAdapterCreator) : Promise<VoiceConnection>
-    {
-        return new Promise((resolve, reject) => {
-            let connection = joinVoiceChannel({
-                channelId: voiceChannelID, 
-                guildId: guildID, 
-                adapterCreator: adapterCreator
-            });
-    
-            connection.on("error", error => {
-                Logger.logDev("--- CN Error ---\n", error);
-                reject(connection);
-            })
-            .on(VoiceConnectionStatus.Ready, () => {
-                Logger.logDev("--- CN Ready ---");
-
-                resolve(connection);
-            })
-            .on(VoiceConnectionStatus.Connecting, () => {
-                Logger.logDev("--- CN Connecting ---");
-            })
-            .on(VoiceConnectionStatus.Signalling, () => {
-                Logger.logDev("--- CN Signaling ---");
-            })
-            .on(VoiceConnectionStatus.Disconnected, () => {
-                Logger.logDev("--- CN Disconnected ---");
-                this.disconnect();
-            })
-            .on(VoiceConnectionStatus.Destroyed, () => {
-                Logger.logDev("--- CN Destroyed ---");
-            });
-        });
+        Logger.logDev(`--- Play: ${this._currentPlayingSongInformation._songInformation._title}`);
+        const textChannel = this.getTextChannelByID(this._currentPlayingSongInformation._textChannelID);
+        textChannel?.send(`${this._currentPlayingSongInformation!._songInformation._title}(${this._currentPlayingSongInformation._songInformation.getSongDurationString()}) 노래를 재생합니다.`);
     }
 
     private async nextSong()
     {
-        Logger.logDev("--- Next Song ---");
+        Logger.logDev("MusicPlayer NextSong");
 
         // 재생할 다음 곡이 없으면 그대로 disconnection 예약
         if(this._songList.length == 0)
         {
-            if(this._autoRandomPlay == true)
+            if(this._autoRandomPlay == false)
             {
-                let output = await this.randomSongInternal(1);
-                for(let i = 0; i < output.videoIDArr.length; ++i)
-                {
-                    const songInfo = new SongInformation(output.videoIDArr[i], output.titleArr[i], output.durationArr[i]);
-                    this._songList.push(new SongPlayInformation(songInfo, this._currentPlayingSongInformation!._voiceChannelID, this._currentPlayingSongInformation!._textChannel, this._currentPlayingSongInformation!._guildeID, this._currentPlayingSongInformation!._adapterCreator));
-                }
+                Logger.logDev("--- MP Reservation Disconnect Timeout")
+
+                this._currentPlayingSongInformation = undefined;
+                this._disconnectionTimer = setTimeout(
+                    () => {
+                        this.disconnect()
+                    }, 1000 * gDisconnectTimeoutSecond
+                    );
+                return;
             }
             else
             {
-                this._currentPlayingSongInformation = undefined;
-                this._disconnectionTimer = setTimeout(() => {this.disconnect()}, 1000 * gDisconnectTimeoutSecond);
-                return;
+                const output = await this.randomSongInternal(1);
+                for(let i = 0; i < output.videoIDArr.length; ++i)
+                {
+                    const songInfo = new SongInformation(output.videoIDArr[i], output.titleArr[i], output.durationArr[i]);
+                    this._songList.push(new SongPlayInformation(songInfo, this._currentPlayingSongInformation!._voiceChannelID, this._currentPlayingSongInformation!._textChannelID));
+                }
             }
         }
 
@@ -1022,7 +1153,7 @@ export class MusicPlayer
 
     private disconnect()
     {
-        Logger.logDev("--- Disconnect ---")
+        Logger.trace("MusicPlayer Disconnect");
 
         this._autoRandomPlay = false;
 
@@ -1041,7 +1172,21 @@ export class MusicPlayer
 
     private clearDisconnectTimeout()
     {
+        Logger.logDev("clearDisconnectTimeout");
+
         clearTimeout(this._disconnectionTimer);
         this._disconnectionTimer = undefined;
+    }
+
+    async shuffleListCommand(message: Message)
+    {
+        Logger.logDev("ShuffleCommand");
+
+        shuffle(this._songList);
+        message.reply(`${this._songList.length}개의 List가 Shuffle되었습니다.`, true);
+    }
+
+    async testCommand(message: Message)
+    {
     }
 }
