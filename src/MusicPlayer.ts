@@ -547,8 +547,11 @@ export class MusicPlayer
         if(voiceChannel == undefined)
             return;
 
-        if(voiceChannel.members.size == 1)  // 1명 >> Sona 자기자신만 있는 경우
-            this.disconnect();
+        if(voiceChannel.members.size > 1)
+            return;
+
+        this.disconnect();
+        return;
     }
 
     private isValidVoiceChannel(voiceChannel: DiscordJS.VoiceBasedChannel | null) : boolean

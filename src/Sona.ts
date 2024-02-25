@@ -1,22 +1,35 @@
 // https://discordjs.guide/
-import DiscordJS from 'discord.js';
+// https://namu.wiki/w/discord.js
+import DiscordJS, { DiscordjsError, TextChannel } from 'discord.js';
 
 import Logger from './Logger'
 import {Message, MusicPlayer} from "./MusicPlayer"
 import { ChatGPT } from './ChatGPT';
 import {CommandPrefix, DiscordToken} from './Token.json';
+import {exec, ExecException, spawn} from 'child_process';
+import {StudyManager} from "./StudyManager"
 
 class DiscordSession
 {
     _guildID: DiscordJS.Snowflake;
     _musicPlayer: MusicPlayer;
     _gpt: ChatGPT;
+    _studyManager: StudyManager | undefined;
     
     constructor(client: DiscordJS.Client, guildID: string)
     {
         this._guildID = guildID;
         this._musicPlayer = new MusicPlayer(client, guildID);
         this._gpt = new ChatGPT();
+        this._studyManager = undefined;
+    }
+
+    startStudyManager(client: DiscordJS.Client, guildID: string, textChannelID: DiscordJS.Snowflake)
+    {
+        if(this._studyManager != undefined)
+            return;
+
+        this._studyManager = new StudyManager(client, guildID, textChannelID);
     }
 
     update(deltaTime: number) : void
@@ -34,6 +47,8 @@ export default class Sona
     _client: DiscordJS.Client;
     _sessionMap: Map<string, DiscordSession>;
     _commandArr: Array<Command>;
+
+    _palWorldServerTextChannelID: string;
 
     private getSession(guildID: DiscordJS.Snowflake) : DiscordSession
     {
@@ -67,6 +82,8 @@ export default class Sona
 
     constructor()
     {
+        this._palWorldServerTextChannelID = "";
+
         this._sessionMap = new Map<string, DiscordSession>();
         this._client = new DiscordJS.Client({
             intents: [
@@ -170,6 +187,22 @@ export default class Sona
                         newMessage.reply(`올바른 명령어를 입력하세요.`, false);
                     break;
                 }                
+            }
+        }).on(DiscordJS.Events.VoiceStateUpdate, (oldState: DiscordJS.VoiceState, newState:DiscordJS.VoiceState) => {
+            let session = this.getSession(newState.guild.id);
+            if(session._studyManager == undefined)
+                return;
+
+            if(oldState.member!.user.bot == true)
+                return;
+
+            if(oldState.channel == null && newState.channel != null)
+            {
+                session._studyManager.startStudy(oldState.member!.user);
+            }
+            else if(oldState.channel != null && newState.channel == null)
+            {
+                session._studyManager.endStudy(oldState.member!.user);
             }
         });
         if(process.env.NODE_ENV !== 'production')
@@ -311,21 +344,162 @@ export default class Sona
                 message.reply(response!, false);
             }
         }
+        const PalWorldServerStart: Command = {
+            name: "pal_start",
+            description: "PalWorld 서버를 시작합니다.",
+            nameLocalizations: {
+                "en-US": "ps", 
+            }, 
+            run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
+                await interaction.deferReply();
+                
+                const message = new Message(interaction);
+                const targetChannel = this.getTargetVoidChannel();
+                if(targetChannel == undefined)
+                {
+                    message.reply("VoidChannel을 찾을 수 없습니다. 개발자를 찾아주세요.", true);
+                    return;
+                }
+                if(targetChannel.members.size == 0)
+                {
+                    message.reply("VoiceChannel(노가리)에 입장해야만 열 수 있습니다.", true);
+                    return;
+                }
+
+                let pid = await this.findPalWorldServerPID();
+                if(pid != -1)
+                {
+                    message.reply("이미 PalWorld Server가 구동중입니다.", true);
+                    return;
+                }
+
+                this._palWorldServerTextChannelID = message.getTextChannelID()!;
+                spawn('C:/Program Files (x86)/Steam/steamapps/common/PalServer/PalServer.exe');
+
+                message.reply("PalWorldServer 구동이 시작되었습니다.", true);
+            }
+        };
+        const PalWorldServerEnd: Command = {
+            name: "pal_end",
+            description: "PalWorld 서버를 종료합니다.",
+            nameLocalizations: {
+                "en-US": "pe", 
+            }, 
+            run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
+                await interaction.deferReply();
+                
+                const message = new Message(interaction);
+                
+                const success = await this.killPalWorldServer();
+                if(success)
+                {
+                    message.reply("PalWorldServer가 성공적으로 종료되었습니다.", true);
+                }
+                else
+                {
+                    message.reply("PalWorld Server를 먼저 실행해야합니다.", true);
+                }
+            }
+        };
+        const InitializeStudy: Command = 
+        {
+            name: "study",
+            description: "Study Timer를 시작할 채널에서 활용해주세요.",
+            nameLocalizations: {
+                "en-US": "study", 
+                "ko": "스터디", 
+            }, 
+            run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
+                await interaction.deferReply();
+
+                session.startStudyManager(this._client, session._guildID, interaction.channelId);
+
+                const message = new Message(interaction);
+                message.reply("StudyTimer가 시작되었습니다.", true);
+            }
+        }
+        const ShowStudyRank: Command = 
+        {
+            name: "studyrank",
+            description: "Study Ranking을 표시합니다.",
+            nameLocalizations: {
+                "en-US": "sr", 
+                "ko": "스터디랭킹", 
+            }, 
+            run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
+                await interaction.deferReply();
+
+                const message = new Message(interaction);
+                if(session._studyManager == undefined)
+                {
+                    message.reply("스터디를 하고자 하는 채널이 아닙니다.", true);
+                    return;
+                }
+
+                session._studyManager.showRanking(message, "");
+            }
+        }
         const Test: Command = 
         {
             name: "test",
             description: "개발자 Test용 Command입니다.",
             nameLocalizations: {
-                "en-US": "test", 
+                "en-US": "sonatest", 
                 "ko": "테스트", 
             }, 
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
-                session._musicPlayer.testCommand(new Message(interaction));
+                const message = new Message(interaction);
+                message.reply("TEST", true);
             }
         }
 
-        this._commandArr = [PlaySong, SkipSong, ListSong, RandomSong, RankSong, AutoRandomMode, ShuffleList, AskGPT];
+        this._commandArr = [PlaySong, SkipSong, ListSong, RandomSong, RankSong, AutoRandomMode, ShuffleList, PalWorldServerStart, PalWorldServerEnd, AskGPT, InitializeStudy, ShowStudyRank, Test];
+    }
+
+    getTargetVoidChannel() : DiscordJS.VoiceBasedChannel | undefined
+    {
+        const targetChannel = this._client.channels.cache.get("393023869155540994");
+        if(targetChannel == undefined)
+            return undefined;
+
+        return (targetChannel as DiscordJS.VoiceBasedChannel);
+    }
+    async findPalWorldServerPID() : Promise<number>
+    {
+        return new Promise(async (resolve, reject) => {
+            await exec('tasklist', (error: ExecException | null, stdout: string, stderr: string) => {
+                let lines = stdout.toString().split('\n');
+                lines.forEach((line) => {
+                    let parts = line.split('=');
+                    parts.forEach((items) => {
+    
+                        const processName = "PalServer-Win64-Test-Cmd";
+
+                        //console.log(items);
+    
+                        if(items.toString().indexOf(processName) > -1){
+                            const pidStr = items.toString().substring(processName.length + 1, items.toString().indexOf("Console")).trim();
+                            const pid = Number(pidStr);
+                            //console.log('find', pid);
+                            resolve(pid);
+                        }
+                    });
+                });
+
+                resolve(-1);
+            });
+        });
+    }
+    async killPalWorldServer() : Promise<boolean>
+    {
+        const pid = await this.findPalWorldServerPID();
+        if(pid == -1)
+            return false;
+
+        await process.kill(pid);
+
+        return true;
     }
 
     run()
@@ -333,10 +507,31 @@ export default class Sona
         this._client.login(DiscordToken);
     }
 
-    update(deltaTime: number)
+    async update(deltaTime: number)
     {
-        this._sessionMap.forEach((session, key) => {
-            session.update(deltaTime);
-        });
+        {
+            this._sessionMap.forEach(async (session, key) => {
+                session.update(deltaTime);
+            });
+        }
+
+        // PalWorldServer 관련 임시 코드. PalWorld 안하게되면 삭제해야함
+        {
+            const targetChannel = this.getTargetVoidChannel();
+            if(targetChannel == undefined)
+                return;
+        
+            let tempID = this._palWorldServerTextChannelID;
+            if(this._palWorldServerTextChannelID != "" && targetChannel.members.size == 0)
+            {
+                this._palWorldServerTextChannelID = "";
+    
+                const success = await this.killPalWorldServer();
+                if(success)
+                {
+                    (this._client.channels.cache.get(tempID) as TextChannel).send("채널에 아무도 남아있지 않아 PalWorldServer를 종료합니다.");
+                }
+            }
+        }
     }
 }

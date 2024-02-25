@@ -12,6 +12,7 @@ function main()
     const sona = new Sona();
     let lastUpdate : number = 0;
     let updateInterval : NodeJS.Timer | undefined = undefined;
+
     try
     {
         sona.run();
@@ -19,9 +20,10 @@ function main()
         lastUpdate = Date.now();
         updateInterval = setInterval(() => {
             let now = Date.now();
-            let deltaTime = now - lastUpdate;
+            let deltaTime = (now - lastUpdate) / 1000;  // ms to second
             sona.update(deltaTime);
-        });
+            lastUpdate = now;
+        }, 100);
     }
     catch(err)
     {
