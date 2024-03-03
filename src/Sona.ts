@@ -436,7 +436,8 @@ export default class Sona
                     return;
                 }
 
-                session._studyManager.showRanking(message, "");
+                let sentence = session._studyManager.makeRanking(" ");
+                message.reply(sentence, true);
             }
         }
         const Test: Command = 
@@ -454,7 +455,7 @@ export default class Sona
             }
         }
 
-        this._commandArr = [PlaySong, SkipSong, ListSong, RandomSong, RankSong, AutoRandomMode, ShuffleList, PalWorldServerStart, PalWorldServerEnd, AskGPT, InitializeStudy, ShowStudyRank, Test];
+        this._commandArr = [PlaySong, SkipSong, ListSong, RandomSong, RankSong, AutoRandomMode, ShuffleList, InitializeStudy, ShowStudyRank, Test];
     }
 
     getTargetVoidChannel() : DiscordJS.VoiceBasedChannel | undefined

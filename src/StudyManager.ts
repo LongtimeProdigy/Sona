@@ -1,12 +1,8 @@
 import {ResourcePath, StudyManagerPath, StudyManagerPrefix} from './Token.json';
-import DiscordJS, { GuildWidgetStyle, MembershipScreeningFieldType, UserFlagsBitField, VoiceChannel } from "discord.js"
+import DiscordJS from "discord.js"
 import Logger from './Logger'
-import { FileHelper } from './Utility';
-import {Message} from "./MusicPlayer"
-import { lookupService } from 'dns';
-import { write } from 'fs';
-//import schedule from 'node-schedule'
-const schedule = require('node-schedule');
+import { FileUtility, TimeUtility } from './Utility';
+const schedule = require('node-schedule');  //import schedule from 'node-schedule'
 
 class StudyHistory
 {
@@ -18,61 +14,6 @@ class StudyHistory
         this._start = start;
         this._end = end;
     }
-}
-
-function getFilePath(guildID: string) : string
-{
-    function getWeek(dowOffset = 0) {
-    /*getWeek() was developed by Nick Baicoianu at MeanFreePath: http://www.meanfreepath.com */
-        let currentDate = new Date();
-
-        dowOffset = typeof(dowOffset) == 'number' ? dowOffset : 0; //default dowOffset to zero
-        let newYear = new Date(currentDate.getFullYear(),0,1);
-        let day = newYear.getDay() - dowOffset; //the day of week the year begins on
-        day = (day >= 0 ? day : day + 7);
-        let daynum = Math.floor((currentDate.getTime() - newYear.getTime() - (currentDate.getTimezoneOffset()-newYear.getTimezoneOffset())*60000)/86400000) + 1;
-        let weeknum;
-        //if the year starts before the middle of a week
-        if(day < 4) {
-            weeknum = Math.floor((daynum+day-1)/7) + 1;
-            if(weeknum > 52) {
-                let nYear = new Date(currentDate.getFullYear() + 1,0,1);
-                let nday = nYear.getDay() - dowOffset;
-                nday = nday >= 0 ? nday : nday + 7;
-                /*if the next year starts before the middle of
-                    the week, it is week #1 of that year*/
-                weeknum = nday < 4 ? 1 : 53;
-            }
-        }
-        else {
-            weeknum = Math.floor((daynum+day-1)/7);
-        }
-        return weeknum;
-    };
-    let week = getWeek();
-    let filePath = `${ResourcePath}/${StudyManagerPath}/${StudyManagerPrefix}_${week}_${guildID}.json`;
-    return filePath;
-}
-function getTempFilePath(guildID: string) : string
-{
-    let filePath = `${ResourcePath}/${StudyManagerPath}/${StudyManagerPrefix}_Temp_${guildID}.json`;
-    return filePath;
-}
-
-function convertUTCtoTime(second: number)
-{
-    let secondTime = second / 1000;
-    let hours = Math.floor(secondTime / 3600);
-    let minutes = Math.floor((secondTime - hours * 3600) / 60);
-    let seconds = secondTime % 60;
-
-    let ret = "";
-    if(hours > 0)
-        ret += "" + hours + ":" + (minutes < 10 ? "0" : "");
-    ret += "" + minutes + ":" + (seconds < 10 ? "0" : "");
-    ret += "" + seconds;
-
-    return ret;
 }
 
 class RankInformation
@@ -96,74 +37,29 @@ export class StudyManager
     _history: Map<string, Array<StudyHistory>>; //key: userID
     _currentStudyInfo: Map<string, Date>; //key: userID, value: startDate
 
-    constructor(client: DiscordJS.Client, guildID: string, textChannelID: DiscordJS.Snowflake)
+    private loadHistory(filePath: string)
     {
-        this._client = client;
-        this._guildID = guildID;
-        this._textChannelID = textChannelID;
-        this._currentStudyInfo = new Map<string, Date>();
+        let history = new Map<string, Array<StudyHistory>>
+        FileUtility.prepareFilePath(filePath);
 
-        // Temp History
-        // 크래시가 나는 경우 데이터를 읽어올 수 있도록
-        {
-            let filePath = getTempFilePath(this._guildID);
-            FileHelper.prepareFilePath(filePath);
+        const loadObj = FileUtility.readFileForJSON(filePath);
+        let readHistory = new Map(Object.entries(loadObj));
 
-            const loadObj = FileHelper.readFileForJSON(filePath);
-            let tempCurrentStudyInfo = new Map(Object.entries(loadObj));
+        history = new Map<string, Array<StudyHistory>>;
 
-            // 자꾸 StudyHistory의 멤버가 string타입으로 읽어져서 새로 객체를 만들어 Date타입으로 들어가게한다.
-            tempCurrentStudyInfo.forEach((value, key) => {
-                let tempDate = new Date(value as string);
-                this._currentStudyInfo.set(key, tempDate);
-            });
-        }
-
-        // History
-        {
-            let filePath = getFilePath(this._guildID);
-            FileHelper.prepareFilePath(filePath);
-
-            const loadObj = FileHelper.readFileForJSON(filePath);
-            let readHistory = new Map(Object.entries(loadObj));
-
-            this._history = new Map<string, Array<StudyHistory>>;
-
-            // 자꾸 StudyHistory의 멤버가 string타입으로 읽어져서 새로 객체를 만들어 Date타입으로 들어가게한다.
-            readHistory.forEach((value, key) => {
-                let historyArray = new Array<StudyHistory>();
-                (value as []).forEach((value) => {
-                    let start = value["_start"];
-                    let end = value["_end"];
-                    historyArray.push(new StudyHistory(new Date(start), new Date(end)));
-                });
-
-                this._history.set(key, historyArray);
-            });
-        }
-
-        // Alram
-        {
-            // Daily (매일 오전 7시)
-            const alramDaily = schedule.scheduleJob('* * * 7 * *', () => {
-                this.showRanking(undefined, "Daily");
+        // 자꾸 StudyHistory의 멤버가 string타입으로 읽어져서 새로 객체를 만들어 Date타입으로 들어가게한다.
+        readHistory.forEach((value, key) => {
+            let historyArray = new Array<StudyHistory>();
+            (value as []).forEach((value) => {
+                let start = value["_start"];
+                let end = value["_end"];
+                historyArray.push(new StudyHistory(new Date(start), new Date(end)));
             });
 
-            // Weekly (매일 오전 7시 10분)
-            const alramWeekly = schedule.scheduleJob('10 * * 7 * MON', () => {
-                let tempCurrentInfo = new Map<string, Date>;
-                this._currentStudyInfo.forEach((start: Date, userID: string) => {
-                    let end = new Date();
-                    this.moveCurrentStudyToHistory(userID, start, end);
-                    tempCurrentInfo.set(userID, end);
-                });
-                this._currentStudyInfo = tempCurrentInfo;
-                this.writeCurrentSrudyInfo();
-                this.writeHistory();
-                
-                this.showRanking(undefined, "Weekly");
-            });
-        }
+            history.set(key, historyArray);
+        });
+
+        return history;
     }
 
     private getUserName(userID: string) : string | undefined
@@ -171,7 +67,6 @@ export class StudyManager
         let user = this._client.users.cache.get(userID);
         return user?.tag;
     }
-
     private getGuild() : DiscordJS.Guild
     {
         const guild = this._client.guilds.cache.get(this._guildID);
@@ -190,17 +85,32 @@ export class StudyManager
         return textChannel as DiscordJS.TextChannel;
     }
 
+    private getCurrentHistoryFilePath() : string
+    {
+        let filePath = `${ResourcePath}/${StudyManagerPath}/${StudyManagerPrefix}_${this._guildID}_TempHistory.json`;
+        return filePath;
+    }
+    private getCurrentStudyFilePath() : string
+    {
+        let filePath = `${ResourcePath}/${StudyManagerPath}/${StudyManagerPrefix}_${this._guildID}_TempStudy.json`;
+        return filePath;
+    }
     private writeCurrentSrudyInfo()
     {
-        let filePath = getTempFilePath(this._guildID);
+        let filePath = this.getCurrentStudyFilePath();
         let sentence = Object.fromEntries(this._currentStudyInfo);
-        FileHelper.writeFileForJSON(filePath, sentence);
+        FileUtility.writeFileForJSON(filePath, sentence);
     }
-    private writeHistory()
+    // StudyManager의 멤버들을 사용하는 실수를 하지 않기 위해서 일부러 static으로둠
+    static saveHistory(filePath: string, history: Map<string, Array<StudyHistory>>)
     {
-        let filePath = getFilePath(this._guildID);
-        let sentence = Object.fromEntries(this._history);
-        FileHelper.writeFileForJSON(filePath, sentence);
+        let sentence = Object.fromEntries(history);
+        FileUtility.writeFileForJSON(filePath, sentence);
+    }
+    private writeCurrentHistory()
+    {
+        let filePath = this.getCurrentHistoryFilePath();
+        StudyManager.saveHistory(filePath, this._history);
     }
 
     private moveCurrentStudyToHistory(userID: string, start: Date, end: Date)
@@ -220,8 +130,124 @@ export class StudyManager
             // 이미 스터디를 한 번 해본사람
             userHistory.push(newHistory);
         }
+    }
 
-        this.writeCurrentSrudyInfo();
+    constructor(client: DiscordJS.Client, guildID: string, textChannelID: DiscordJS.Snowflake)
+    {
+        this._client = client;
+        this._guildID = guildID;
+        this._textChannelID = textChannelID;
+        this._currentStudyInfo = new Map<string, Date>();
+
+        // Temp History
+        // 크래시가 나는 경우 데이터를 읽어올 수 있도록
+        {
+            {
+                let filePath = this.getCurrentStudyFilePath();
+                FileUtility.prepareFilePath(filePath);
+    
+                const loadObj = FileUtility.readFileForJSON(filePath);
+                let tempCurrentStudyInfo = new Map(Object.entries(loadObj));
+    
+                // 자꾸 StudyHistory의 멤버가 string타입으로 읽어져서 새로 객체를 만들어 Date타입으로 들어가게한다.
+                tempCurrentStudyInfo.forEach((value, key) => {
+                    let tempDate = new Date(value as string);
+                    this._currentStudyInfo.set(key, tempDate);
+                });
+            }
+
+            // 봇이 켜져있지 않은 상태에서 시작한 사람들은 봇이 켜지는 시점에서부터라도 시작할 수 있도록
+            {
+                let guild = this.getGuild();
+                guild.members.cache.forEach((member: DiscordJS.GuildMember, key: string) => {
+                    if(member.user.bot == true)
+                        return;
+    
+                    let userID = member.user.id;
+                    let currentInfo = this._currentStudyInfo.get(userID);
+                    // 이미 temp에서 읽어온 사람은 굳이 지금부터 채킹하지 않아도된다.
+                    if(currentInfo == undefined)
+                    {
+                        this.startStudy(member.user);
+                    }
+                });
+            }
+        }
+
+
+        // History
+        {
+            let filePath = this.getCurrentHistoryFilePath();
+            this._history = this.loadHistory(filePath);
+        }
+
+        // Alram
+        {
+            // Daily Alarm
+            const alramDaily = schedule.scheduleJob('55 59 5 * * *', () => {
+                let sentence = this.makeRanking(" Daily");
+                this.getTextChannel()?.send(sentence);
+            });
+
+            // Change Weekly
+            const changeWeekly = schedule.scheduleJob('0 0 6 * * MON', () => {
+                // weekly alarm
+                {
+                    let sentence = this.makeRanking(" Weekly");
+                    this.getTextChannel()?.send(sentence);
+                }
+
+                // 현재 공부중인 사람이 있다면 지금 시간을 기점으로 History에 저장
+                {
+                    let endTime = new Date();
+                    let newStartTime = endTime;
+                    newStartTime.setSeconds(newStartTime.getSeconds() + 1);
+                    let tempCurrentInfo = new Map<string, Date>;
+                    this._currentStudyInfo.forEach((start: Date, userID: string) => {
+                        this.moveCurrentStudyToHistory(userID, start, endTime);
+                        tempCurrentInfo.set(userID, newStartTime);
+                    });
+                    this._currentStudyInfo = tempCurrentInfo;
+                    this.writeCurrentSrudyInfo();
+                }
+
+                // 현재 History는 저장 후에 초기화
+                {
+                    function getWeekNumber(currentDate = new Date(), dowOffset = 0) {
+                        /*getWeekNumber() was developed by Nick Baicoianu at MeanFreePath: http://www.meanfreepath.com */
+                        dowOffset = typeof(dowOffset) == 'number' ? dowOffset : 0; //default dowOffset to zero
+                        let newYear = new Date(currentDate.getFullYear(),0,1);
+                        let day = newYear.getDay() - dowOffset; //the day of week the year begins on
+                        day = (day >= 0 ? day : day + 7);
+                        let daynum = Math.floor((currentDate.getTime() - newYear.getTime() - (currentDate.getTimezoneOffset()-newYear.getTimezoneOffset())*60000)/86400000) + 1;
+                        let weeknum;
+                        //if the year starts before the middle of a week
+                        if(day < 4) {
+                            weeknum = Math.floor((daynum+day-1)/7) + 1;
+                            if(weeknum > 52) {
+                                let nYear = new Date(currentDate.getFullYear() + 1,0,1);
+                                let nday = nYear.getDay() - dowOffset;
+                                nday = nday >= 0 ? nday : nday + 7;
+                                /*if the next year starts before the middle of
+                                    the week, it is week #1 of that year*/
+                                weeknum = nday < 4 ? 1 : 53;
+                            }
+                        }
+                        else {
+                            weeknum = Math.floor((daynum+day-1)/7);
+                        }
+                        return weeknum;
+                    };
+
+                    let weekNumber = getWeekNumber();
+                    let filePath = `${ResourcePath}/${StudyManagerPath}/${StudyManagerPrefix}_${this._guildID}_${weekNumber}.json`;
+
+                    StudyManager.saveHistory(filePath, this._history);
+                    // 주마다 초기화 (makeRanking에서 쓰이기때문에 뒤에 있어야함)
+                    this._history.clear();
+                }
+            });
+        }
     }
 
     startStudy(user: DiscordJS.User)
@@ -239,50 +265,33 @@ export class StudyManager
     }
     endStudy(user: DiscordJS.User)
     {
-        let start = this._currentStudyInfo.get(user.id)!;
+        let start = this._currentStudyInfo.get(user.id);
+        if(start == undefined)
+            return;
+        
         let end = new Date();
         const textChannel = this.getTextChannel();
         if(textChannel != undefined)
         {
-            let duration = end.getTime() - start.getTime();
-            textChannel.send(`${user.username}님께서 스터디를 종료하였습니다. 스터디시간: ${convertUTCtoTime(duration)}`);
+            let milli = end.getTime() - start.getTime();
+            textChannel.send(`${user.username}님께서 스터디를 종료하였습니다.(${TimeUtility.convertMillisecondToDigitalString(milli)}분)`);
         }
 
         this.moveCurrentStudyToHistory(user.id, start, end);
 
         this.writeCurrentSrudyInfo();
-        this.writeHistory();
+        this.writeCurrentHistory();
     }
 
-    private showRaningInternal(rank: Array<RankInformation>, prefix: string)
+    makeRanking(prefix: string)
     {
         let sentence = "";
         if(this._history.size == 0)
         {
-            sentence += "스터디를 시작한 사람이 없습니다."
+            sentence += "해당 주차에 스터디를 시작한 사람이 없습니다."
+            return sentence;
         }
-        else
-        {    
-            rank.sort((lhs: RankInformation, rhs: RankInformation) => {
-                return lhs._time - rhs._time;
-            });
-    
-            sentence += `★${prefix}`;
-            sentence += " Study Ranking ★```\n· 누적 시간은 매주 월요일에 초기화됩니다.\n· 한 주가 지난 시점이면 스터디 종료날짜가 기준입니다.\n\n";
-            rank.forEach((rank: RankInformation, index: number) => {
-                let temp = `${index + 1}. ${rank._userName} (${convertUTCtoTime(rank._time)} 초)\n`;
-                if(sentence.length + temp.length > 2000)
-                    return;
-    
-                sentence += temp;
-            });
-            sentence += "```";
-        }
-
-        return sentence;
-    }
-    showRanking(message: Message | undefined, prefix: string)
-    {
+        
         let rank = new Array<RankInformation>();
         this._history.forEach((historyArr: Array<StudyHistory>, userID: string) => {
             let totalTime = 0;
@@ -294,11 +303,21 @@ export class StudyManager
             rank.push(new RankInformation(userName, totalTime));
         });
 
-        let sentence = this.showRaningInternal(rank, prefix);
+        rank.sort((lhs: RankInformation, rhs: RankInformation) => {
+            return rhs._time - lhs._time;
+        });
 
-        if(message == undefined)
-            this.getTextChannel()?.send(sentence);
-        else
-            message.reply(sentence, true);
+        sentence += `★${prefix} `;
+        sentence += "Study Ranking ★```\n· 누적 시간은 매주 월요일 오전 6시에 초기화됩니다.\n\n";
+        rank.forEach((rank: RankInformation, index: number) => {
+            let temp = `${index + 1}. ${rank._userName} (${TimeUtility.convertMillisecondToDigitalString(rank._time)}분)\n`;
+            if(sentence.length + temp.length > 2000)
+                return;
+
+            sentence += temp;
+        });
+        sentence += "```";
+
+        return sentence;
     }
 }

@@ -33,3 +33,13 @@
 - currentSongInfo가 없는데 접근하니 당연터짐
 - NextSong : playcommand, randomsongcommand, autoRancomcommand, playsong(error/statechange 2개)
 - PlaySong : nextsong, playsong(error)
+
+
+
+
+## 스터디
+- 초 단위 절삭 (어디에?)
+- 달력 형태로 해당 날짜에 진행한 시간 표기 (누적? 최대?)
+>> 달력에 공간이 색으로 차오른다
+- 월요일 오전 6시를 마감시간으로
+- 봇 알람 안가게 할 수 있는지?
