@@ -131,6 +131,3 @@ dist
 
 # Token
 *.json
-
-# Resource
-Resource/
