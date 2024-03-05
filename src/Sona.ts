@@ -109,7 +109,7 @@ export default class Sona
             if(message.author.bot == true)
                 return;
             
-            Logger.logDev("--- messageCreate ---\n", message);
+            //Logger.logDev("--- messageCreate ---\n", message);
 
             if(message.guildId == null)
                 return;
@@ -205,17 +205,17 @@ export default class Sona
                 session._studyManager.endStudy(oldState.member!.user);
             }
         });
-        if(process.env.NODE_ENV !== 'production')
-        {
-            this._client.on(DiscordJS.Events.MessageUpdate, (oldMessage, newMessage) => {
-                if(oldMessage.author!.bot == true || newMessage.author!.bot == true)
-                    return;
+        // if(process.env.NODE_ENV !== 'production')
+        // {
+        //     this._client.on(DiscordJS.Events.MessageUpdate, (oldMessage, newMessage) => {
+        //         if(oldMessage.author!.bot == true || newMessage.author!.bot == true)
+        //             return;
     
-                Logger.logDev("--- Client MessageUpdate ---\n", oldMessage, newMessage);
-            }).on(DiscordJS.Events.Debug, message =>{
-                Logger.logDev("--- Client Debug ---\n", message);
-            });
-        }
+        //         Logger.logDev("--- Client MessageUpdate ---\n", oldMessage, newMessage);
+        //     }).on(DiscordJS.Events.Debug, message =>{
+        //         Logger.logDev("--- Client Debug ---\n", message);
+        //     });
+        // }
 
         const PlaySong: Command = {
             name: "p",
@@ -436,7 +436,7 @@ export default class Sona
                     return;
                 }
 
-                let sentence = session._studyManager.makeRanking(" ");
+                let sentence = await session._studyManager.makeRanking(" ");
                 message.reply(sentence, true);
             }
         }

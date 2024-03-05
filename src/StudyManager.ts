@@ -62,11 +62,6 @@ export class StudyManager
         return history;
     }
 
-    private getUserName(userID: string) : string | undefined
-    {
-        let user = this._client.users.cache.get(userID);
-        return user?.tag;
-    }
     private getGuild() : DiscordJS.Guild
     {
         const guild = this._client.guilds.cache.get(this._guildID);
@@ -162,6 +157,9 @@ export class StudyManager
                 guild.members.cache.forEach((member: DiscordJS.GuildMember, key: string) => {
                     if(member.user.bot == true)
                         return;
+
+                    if(member.voice.channel == null)
+                        return;
     
                     let userID = member.user.id;
                     let currentInfo = this._currentStudyInfo.get(userID);
@@ -184,16 +182,16 @@ export class StudyManager
         // Alram
         {
             // Daily Alarm
-            const alramDaily = schedule.scheduleJob('55 59 5 * * *', () => {
-                let sentence = this.makeRanking(" Daily");
+            const alramDaily = schedule.scheduleJob('55 59 5 * * *', async () => {
+                let sentence = await this.makeRanking(" Daily");
                 this.getTextChannel()?.send(sentence);
             });
 
             // Change Weekly
-            const changeWeekly = schedule.scheduleJob('0 0 6 * * MON', () => {
+            const changeWeekly = schedule.scheduleJob('0 0 6 * * MON', async () => {
                 // weekly alarm
                 {
-                    let sentence = this.makeRanking(" Weekly");
+                    let sentence = await this.makeRanking(" Weekly");
                     this.getTextChannel()?.send(sentence);
                 }
 
@@ -283,7 +281,7 @@ export class StudyManager
         this.writeCurrentHistory();
     }
 
-    makeRanking(prefix: string)
+    async makeRanking(prefix: string)
     {
         let sentence = "";
         if(this._history.size == 0)
@@ -291,17 +289,19 @@ export class StudyManager
             sentence += "해당 주차에 스터디를 시작한 사람이 없습니다."
             return sentence;
         }
-        
-        let rank = new Array<RankInformation>();
-        this._history.forEach((historyArr: Array<StudyHistory>, userID: string) => {
-            let totalTime = 0;
-            historyArr.forEach((history: StudyHistory) => {
-                totalTime += (history._end.getTime() - history._start.getTime());
-            })
 
-            let userName = this.getUserName(userID)!;
+        let rank = new Array<RankInformation>();
+        for(const [userID, history] of this._history)
+        {
+            let totalTime = 0;
+            history.forEach((history: StudyHistory) => {
+                totalTime += (history._end.getTime() - history._start.getTime());
+            });
+
+            let user = await this._client.users.fetch(userID);
+            let userName = user.username;
             rank.push(new RankInformation(userName, totalTime));
-        });
+        }
 
         rank.sort((lhs: RankInformation, rhs: RankInformation) => {
             return rhs._time - lhs._time;
