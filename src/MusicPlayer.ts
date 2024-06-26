@@ -1,5 +1,5 @@
 import DiscordJS, { DiscordjsError } from 'discord.js';
-import {joinVoiceChannel, createAudioPlayer, createAudioResource, VoiceConnection, AudioPlayerStatus, AudioPlayerState, AudioPlayer, VoiceConnectionStatus, NoSubscriberBehavior} from '@discordjs/voice';
+import {joinVoiceChannel, createAudioPlayer, createAudioResource, VoiceConnection, AudioPlayerStatus, AudioPlayerState, AudioPlayer, VoiceConnectionStatus, NoSubscriberBehavior, AudioResource} from '@discordjs/voice';
 import { Readable } from 'stream';
 import fs, { writeFile } from 'fs';
 import path from 'path';
@@ -961,6 +961,8 @@ export class MusicPlayer
 
         if(this._connection == undefined)
         {
+            Logger.logDev("Create Connection");
+
             const guild = this.getGuild();
 
             this._connection = joinVoiceChannel({
@@ -999,22 +1001,19 @@ export class MusicPlayer
 
         if(this._player == undefined)
         {
+            Logger.logDev("Create Player");
+
             this._player = createAudioPlayer({
                 behaviors: {
                     noSubscriber: NoSubscriberBehavior.Play
                 }
             });
             this._player.on(AudioPlayerStatus.Idle, (oldState: AudioPlayerState, newState: AudioPlayerState) => {
-                Logger.logDev('--- MP State Change ---');
+                Logger.logDev('--- MP State Change ---\nFrom: ', oldState.status, " - To: ", newState.status);
 
                 if(oldState.status == AudioPlayerStatus.Playing && newState.status == AudioPlayerStatus.Idle)
                 {
-                    const textChannel = this.getTextChannelByID(this._currentPlayingSongInformation!._textChannelID);
-                    if(this._currentPlayingSongInformation == undefined)
-                    {
-                        textChannel?.send(`MP State Change: currentPlayingSongInformation이 없으면 안되는데.. 없는 것으로 추정됩니다. 반드시 개발자에게 통보요망`);
-                    }
-                    else
+                    if(this._currentPlayingSongInformation != undefined)
                     {
                         const id = this._currentPlayingSongInformation!._songInformation._id;
                         let playCount = this._songRankInformationMap.get(id);
@@ -1025,6 +1024,7 @@ export class MusicPlayer
     
                         this._songHistory.enqueue(id);
                     }
+                    // 강제로 연결 끊기를 하는 경우 CN Disconnection이 먼저 수행된 후에 여기에 들어오기 때문에 currentPlayingSongInformation이 없다.
                     
                     this.nextSong();
                 }
@@ -1036,81 +1036,94 @@ export class MusicPlayer
             if(process.env.NODE_ENV !== 'production')
             {
                 this._player.on('debug', message => {
-                    Logger.logDev("--- MP Debug ---\n", message);
+                    Logger.logDev("--- MP Debug ---", message);
                 })
             }
         }
 
         async function createAudioStream(info: SongPlayInformation)
         {
+            let mode = 2;
             // 자체제작
-            // {
-            //     //https://velog.io/@tan90/youtube-dl
-            //     /**
-            //      * 1. Video가 있는 Youtube HTML 가져오기
-            //      * 2. HTML에서 ytInitialPlayerResponse를 JSON로 만들기
-            //      * 3. JSON에서 streamingData.formats로 접근
-            //      * 4. 다음 분기를 따른다.
-            //      *  4-1. url이 있다면 url을 그냥 GET하면 동영상이 넘어온다.
-            //      *  4-2. url이 없는 경우 signatureChiper가 대신 있을 것
-            //      *      4-2-1. HTML에 base.js를 보면 복호화 코드가 있다.
-            //      *      4-2-2. 이 곳에 signatureChiper을 넣으면 복호화된 URL이 새로나온다.
-            //      *      4-2-3. 
-            //      */
-            //     const html = await (await fetch(`${gYoutubeLink}?${gYoutubeLinkVideoIDKeyword}=Za9pOxEGqWU`)).text();
-            //     const matches = html.match(/ytInitialPlayerResponse\s*=\s*({.+?})\s*;\s*(?:var\s+meta|<\/script|\n)/);
-            //     const json = JSON.parse(matches![1]);
-            //     if('url' in json.streamingData.formats)
-            //         Logger.logDev('url: ', json.streamingData.formats.url);
-            //     else if('signatureCipher' in json.streamingData.formats)
-            //         Logger.logDev('signatureCipher: ', json.streamingData.formats.signatureCipher);
-            //     else
-            //         Logger.logDev('There is no sourceURL!');
-
-            //     // function decipher(a: any) {
-            //     //     var b = {
-            //     //         credentials: "include",
-            //     //         cache: "no-store"
-            //     //     };
-            //     //     Object.assign(b, this.Y);
-            //     //     this.B && (b.signal = this.B.signal);
-            //     //     a = new Request(a,b);
-            //     //     fetch(a).then(this.oa, this.onError).then(void 0, gy)
-            //     // }
-
-            //     return new Readable();
-            // }
-                
-            // File에서 읽기
-            // {
-            //     let fs = await import('fs');
-            //     const stream = fs.createReadStream('../Sona/resource/cupid.mp3');
-            //     return stream;
-            // }
-
-            // YTDL
-            // {
-            //     const url = `${gYoutubeLink}?${gYoutubeLinkVideoIDKeyword}=${info._songInformation._id}`;
-            //     const {default: YTDL} = await import(`ytdl-core`);
-            //     const stream = await YTDL(url, {
-            //         filter: "audioonly", 
-            //         quality: "highestaudio", 
-            //         highWaterMark: 1 << 25, 
-            //     });
-            //     return stream;
-            // }
-
-            // play-dl
+            switch (mode)
             {
-                const url = `${gYoutubeLink}?${gYoutubeLinkVideoIDKeyword}=${info._songInformation._id}`;
-                const playDL = await import(`play-dl`);
-                const stream = await playDL.stream(url);
-                return stream;
+                default:
+                // 자체제작
+                {
+                    // //https://velog.io/@tan90/youtube-dl
+                    // /**
+                    //  * 1. Video가 있는 Youtube HTML 가져오기
+                    //  * 2. HTML에서 ytInitialPlayerResponse를 JSON로 만들기
+                    //  * 3. JSON에서 streamingData.formats로 접근
+                    //  * 4. 다음 분기를 따른다.
+                    //  *  4-1. url이 있다면 url을 그냥 GET하면 동영상이 넘어온다.
+                    //  *  4-2. url이 없는 경우 signatureChiper가 대신 있을 것
+                    //  *      4-2-1. HTML에 base.js를 보면 복호화 코드가 있다.
+                    //  *      4-2-2. 이 곳에 signatureChiper을 넣으면 복호화된 URL이 새로나온다.
+                    //  *      4-2-3. 
+                    //  */
+                    // const html = await (await fetch(`${gYoutubeLink}?${gYoutubeLinkVideoIDKeyword}=Za9pOxEGqWU`)).text();
+                    // const matches = html.match(/ytInitialPlayerResponse\s*=\s*({.+?})\s*;\s*(?:var\s+meta|<\/script|\n)/);
+                    // const json = JSON.parse(matches![1]);
+                    // if('url' in json.streamingData.formats)
+                    //     Logger.logDev('url: ', json.streamingData.formats.url);
+                    // else if('signatureCipher' in json.streamingData.formats)
+                    //     Logger.logDev('signatureCipher: ', json.streamingData.formats.signatureCipher);
+                    // else
+                    //     Logger.logDev('There is no sourceURL!');
+
+                    // // function decipher(a: any) {
+                    // //     var b = {
+                    // //         credentials: "include",
+                    // //         cache: "no-store"
+                    // //     };
+                    // //     Object.assign(b, this.Y);
+                    // //     this.B && (b.signal = this.B.signal);
+                    // //     a = new Request(a,b);
+                    // //     fetch(a).then(this.oa, this.onError).then(void 0, gy)
+                    // // }
+
+                    //return new AudioResource<null>();
+                }
+                case 1:
+                // File에서 읽기
+                {
+                    let fs = await import('fs');
+                    const stream = fs.createReadStream('../Sona/Resource/qwer.mp3');
+                    const resource = createAudioResource(stream);
+                    return resource;
+                }
+                case 2:
+                // YTDL
+                {
+                    const url = `${gYoutubeLink}?${gYoutubeLinkVideoIDKeyword}=${info._songInformation._id}`;
+                    const {default: YTDL} = await import(`ytdl-core`);
+                    const stream = await YTDL(url, {
+                        filter: "audioonly", 
+                        quality: "highestaudio", 
+                        highWaterMark: 1 << 25, 
+                    });
+                    const resource = createAudioResource(stream);
+                    return resource;
+                }
+                case 3:
+                // play-dl
+                {
+                    const url = `${gYoutubeLink}?${gYoutubeLinkVideoIDKeyword}=${info._songInformation._id}`;
+                    const playDL = await import(`play-dl`);
+                    const stream = await playDL.stream(url, {
+                        quality: 0, 
+                        discordPlayerCompatibility: true
+                    });
+
+                    const resource = createAudioResource(stream.stream, {inputType: stream.type});
+                    return resource;
+                }
             }
         }
 
-        const readStream = await createAudioStream(songPlayInfo);
-        const resource = createAudioResource(readStream.stream, {inputType: readStream.type});
+        const resource = await createAudioStream(songPlayInfo);
+        //console.log(resource);
         this._connection.subscribe(this._player);
         this._player.play(resource);
 
@@ -1156,7 +1169,7 @@ export class MusicPlayer
 
     private disconnect()
     {
-        Logger.trace("MusicPlayer Disconnect");
+        Logger.logDev("MusicPlayer Disconnect");
 
         this._autoRandomPlay = false;
 

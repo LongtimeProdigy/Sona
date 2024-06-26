@@ -23,7 +23,7 @@ function main()
             let deltaTime = (now - lastUpdate) / 1000;  // ms to second
             sona.update(deltaTime);
             lastUpdate = now;
-        }, 100);
+        }, 1000);
     }
     catch(err)
     {
