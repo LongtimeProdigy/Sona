@@ -5,6 +5,7 @@ import DiscordJS, { DiscordjsError, TextChannel } from 'discord.js';
 import Logger from './Logger'
 import {Message, MusicPlayer} from "./MusicPlayer"
 import { ChatGPT } from './ChatGPT';
+import { Gemini } from './Gemini';
 import {CommandPrefix, DiscordToken} from './Token.json';
 import {exec, ExecException, spawn} from 'child_process';
 import {StudyManager} from "./StudyManager"
@@ -14,6 +15,7 @@ class DiscordSession
     _guildID: DiscordJS.Snowflake;
     _musicPlayer: MusicPlayer;
     _gpt: ChatGPT;
+    _gemini: Gemini;
     _studyManager: StudyManager | undefined;
     
     constructor(client: DiscordJS.Client, guildID: string)
@@ -21,6 +23,7 @@ class DiscordSession
         this._guildID = guildID;
         this._musicPlayer = new MusicPlayer(client, guildID);
         this._gpt = new ChatGPT();
+        this._gemini = new Gemini();
         this._studyManager = undefined;
     }
 
@@ -125,6 +128,7 @@ export default class Sona
                     RANK,
                     AUTORANDOMMODE, 
                     CHATGPT, 
+                    GEMINI, 
                     TEST,  
                     COUNT, 
                 }
@@ -144,6 +148,8 @@ export default class Sona
                         return CommandType.AUTORANDOMMODE;
                     else if(message.content.startsWith(`${CommandPrefix}gpt`))
                         return CommandType.CHATGPT;
+                    else if(message.content.startsWith(`${CommandPrefix}gemini`))
+                        return CommandType.GEMINI;
                     else if(message.content.startsWith(`${CommandPrefix}test`))
                         return CommandType.TEST;
                     else
@@ -173,6 +179,13 @@ export default class Sona
                         session._musicPlayer.autoRandomPlayCommand(newMessage);
                     break;
                     case CommandType.CHATGPT:
+                    {
+                        const sentence = newMessage.getContent();
+                        const response = await session._gpt.send(sentence);
+                        newMessage.reply(response!, false);
+                    }
+                    break;
+                    case CommandType.GEMINI:
                     {
                         const sentence = newMessage.getContent();
                         const response = await session._gpt.send(sentence);
@@ -334,6 +347,28 @@ export default class Sona
                     type: DiscordJS.ApplicationCommandOptionType.String,
                     name: 'content',
                     description: '입력값',
+                    required: true,
+                },
+            ],
+            run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
+                await interaction.deferReply();
+                const message = new Message(interaction)
+                const response = await session._gpt.send(message.getContent());
+                message.reply(response!, false);
+            }
+        }
+        const AskGemini: Command = {
+            name: "gemini",
+            description: "Gemini에게 질문합니다.",
+            nameLocalizations: {
+                "en-US": "gemini", 
+                "ko": "잼미니", 
+            }, 
+            options: [
+                {
+                    type: DiscordJS.ApplicationCommandOptionType.String,
+                    name: 'content',
+                    description: 'question',
                     required: true,
                 },
             ],
