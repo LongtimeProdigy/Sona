@@ -11,7 +11,7 @@ function main()
 {
     const sona = new Sona();
     let lastUpdate : number = 0;
-    let updateInterval : NodeJS.Timer | undefined = undefined;
+    let updateInterval : NodeJS.Timeout | undefined = undefined;
 
     try
     {
@@ -31,7 +31,7 @@ function main()
 
         lastUpdate = Date.now();
         if(updateInterval != undefined)
-            clearInterval(updateInterval!);
+            clearInterval(updateInterval);
 
         return main();
     }

@@ -13,7 +13,9 @@ export class Gemini
     {
         // stdio를 명시하지 않거나 'pipe'로 설정하여 스트림을 제어합니다.
         this._gemini = spawn('gemini', [], {
+            detached : true,
             shell: process.platform === 'win32',
+            windowsHide : false
         });
         // stdout 스트림에서 데이터를 수신합니다.
         this._gemini.stdout!.on('data', (data: Buffer) => {
@@ -35,7 +37,7 @@ export class Gemini
     private _handleData(data: Buffer): void {
         const output = data.toString();
         // 디버깅을 위해 모든 출력을 로깅합니다.
-        // console.log(`[DEBUG STDOUT]:`, output);
+        console.log(`[DEBUG STDOUT]:`, output);
 
         // 현재 응답 버퍼에 추가합니다.
         this.fullResponse += output;
@@ -60,8 +62,9 @@ export class Gemini
 
     public send(sentence: string): string
     {
-        this._gemini.stdin!.write(`${sentence}\n`);
-        return "Sona is thinking......";
+        console.log(sentence);
+        const success = this._gemini.stdin?.write(`${sentence}\n`);
+        return success ? "Sona is thinking......" : "Error";
     }
 
     /**

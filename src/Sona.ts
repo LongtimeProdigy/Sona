@@ -42,7 +42,7 @@ class DiscordSession
 }
 
 interface Command extends DiscordJS.ChatInputApplicationCommandData {
-    run: (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => void;
+    run: (session: DiscordSession, interaction: DiscordJS.ChatInputCommandInteraction) => void;
 }
 
 export default class Sona
@@ -65,7 +65,7 @@ export default class Sona
         return session;
     }
 
-    private async handleSlashCommand(client: DiscordJS.Client, interaction: DiscordJS.CommandInteraction): Promise<void>
+    private async handleSlashCommand(client: DiscordJS.Client, interaction: DiscordJS.ChatInputCommandInteraction): Promise<void>
     {
         const slashCommand = this._commandArr.find(c => c.name === interaction.commandName);
         if (!slashCommand) {
@@ -107,7 +107,7 @@ export default class Sona
             Logger.log(`${this._client.user.username} is online`);
         }).on(DiscordJS.Events.InteractionCreate, async (interaction: DiscordJS.Interaction) => {
             if (interaction.isCommand() || interaction.isContextMenuCommand())
-                await this.handleSlashCommand(this._client, interaction);
+                await this.handleSlashCommand(this._client, interaction as DiscordJS.ChatInputCommandInteraction);
         }).on(DiscordJS.Events.MessageCreate, async (message: DiscordJS.Message) => {
             if(message.author.bot == true)
                 return;
@@ -188,7 +188,7 @@ export default class Sona
                     case CommandType.GEMINI:
                     {
                         const sentence = newMessage.getContent();
-                        const response = await session._gpt.send(sentence);
+                        const response = await session._gemini.send(sentence);
                         newMessage.reply(response!, false);
                     }
                     break;
@@ -249,7 +249,7 @@ export default class Sona
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => 
             {
                 await interaction.deferReply();
-                session._musicPlayer.playCommand(new Message(interaction));
+                session._musicPlayer.playCommand(new Message(interaction as DiscordJS.ChatInputCommandInteraction));
             }
         };
         const SkipSong: Command = {
@@ -283,7 +283,7 @@ export default class Sona
             }, 
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
-                session._musicPlayer.listSongCommand(new Message(interaction));
+                session._musicPlayer.listSongCommand(new Message(interaction as DiscordJS.ChatInputCommandInteraction));
             }
         }
         const RandomSong: Command = {
@@ -295,7 +295,7 @@ export default class Sona
             }, 
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
-                session._musicPlayer.randomSongCommand(new Message(interaction), 5);
+                session._musicPlayer.randomSongCommand(new Message(interaction as DiscordJS.ChatInputCommandInteraction), 5);
             }
         }
         const RankSong: Command = {
@@ -307,7 +307,7 @@ export default class Sona
             }, 
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
-                session._musicPlayer.rankSongCommand(new Message(interaction));
+                session._musicPlayer.rankSongCommand(new Message(interaction as DiscordJS.ChatInputCommandInteraction));
             }
         }
         const AutoRandomMode: Command = {
@@ -319,7 +319,7 @@ export default class Sona
             }, 
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
-                session._musicPlayer.autoRandomPlayCommand(new Message(interaction));
+                session._musicPlayer.autoRandomPlayCommand(new Message(interaction as DiscordJS.ChatInputCommandInteraction));
             }
         }
         const ShuffleList: Command = 
@@ -332,7 +332,7 @@ export default class Sona
             }, 
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
-                session._musicPlayer.shuffleListCommand(new Message(interaction));
+                session._musicPlayer.shuffleListCommand(new Message(interaction as DiscordJS.ChatInputCommandInteraction));
             }
         }
         const AskGPT: Command = {
@@ -352,7 +352,7 @@ export default class Sona
             ],
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
-                const message = new Message(interaction)
+                const message = new Message(interaction as DiscordJS.ChatInputCommandInteraction)
                 const response = await session._gpt.send(message.getContent());
                 message.reply(response!, false);
             }
@@ -374,8 +374,8 @@ export default class Sona
             ],
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
-                const message = new Message(interaction)
-                const response = await session._gpt.send(message.getContent());
+                const message = new Message(interaction as DiscordJS.ChatInputCommandInteraction)
+                const response = await session._gemini.send(message.getContent());
                 message.reply(response!, false);
             }
         }
@@ -388,7 +388,7 @@ export default class Sona
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
                 
-                const message = new Message(interaction);
+                const message = new Message(interaction as DiscordJS.ChatInputCommandInteraction);
                 const targetChannel = this.getTargetVoidChannel();
                 if(targetChannel == undefined)
                 {
@@ -423,7 +423,7 @@ export default class Sona
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
                 
-                const message = new Message(interaction);
+                const message = new Message(interaction as DiscordJS.ChatInputCommandInteraction);
                 
                 const success = await this.killPalWorldServer();
                 if(success)
@@ -449,7 +449,7 @@ export default class Sona
 
                 session.startStudyManager(this._client, session._guildID, interaction.channelId);
 
-                const message = new Message(interaction);
+                const message = new Message(interaction as DiscordJS.ChatInputCommandInteraction);
                 message.reply("StudyTimer가 시작되었습니다.", true);
             }
         }
@@ -464,7 +464,7 @@ export default class Sona
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
 
-                const message = new Message(interaction);
+                const message = new Message(interaction as DiscordJS.ChatInputCommandInteraction);
                 if(session._studyManager == undefined)
                 {
                     message.reply("스터디를 하고자 하는 채널이 아닙니다.", true);
@@ -485,12 +485,12 @@ export default class Sona
             }, 
             run: async (session: DiscordSession, interaction: DiscordJS.CommandInteraction) => {
                 await interaction.deferReply();
-                const message = new Message(interaction);
+                const message = new Message(interaction as DiscordJS.ChatInputCommandInteraction);
                 message.reply("TEST", true);
             }
         }
 
-        this._commandArr = [PlaySong, SkipSong, ListSong, RandomSong, RankSong, AutoRandomMode, ShuffleList, InitializeStudy, ShowStudyRank, Test];
+        this._commandArr = [PlaySong, SkipSong, ListSong, RandomSong, RankSong, AutoRandomMode, ShuffleList, InitializeStudy, ShowStudyRank, AskGemini, Test];
     }
 
     getTargetVoidChannel() : DiscordJS.VoiceBasedChannel | undefined

@@ -354,18 +354,18 @@ class YoutubeHelper
 
 export class Message
 {
-    _target: DiscordJS.CommandInteraction | DiscordJS.Message;
+    _target: DiscordJS.ChatInputCommandInteraction | DiscordJS.Message;
 
-    constructor(target: DiscordJS.CommandInteraction | DiscordJS.Message)
+    constructor(target: DiscordJS.ChatInputCommandInteraction | DiscordJS.Message)
     {
         this._target = target;
     }
 
     getContent() : string
     {
-        if(this._target instanceof DiscordJS.CommandInteraction)
+        if(this._target instanceof DiscordJS.ChatInputCommandInteraction)
         {
-            return this._target.options.get('content')?.value as string;
+            return (this._target as DiscordJS.ChatInputCommandInteraction).options.getString(`content`)!;
         }
         else if(this._target instanceof DiscordJS.Message)
         {
@@ -381,7 +381,7 @@ export class Message
 
     getVoiceChannel() : DiscordJS.VoiceBasedChannel | null
     {
-        if(this._target instanceof DiscordJS.CommandInteraction)
+        if(this._target instanceof DiscordJS.ChatInputCommandInteraction)
             return (this._target.member as DiscordJS.GuildMember).voice.channel;
         else if(this._target instanceof DiscordJS.Message)
             return this._target.member!.voice.channel;
@@ -392,7 +392,7 @@ export class Message
 
     getUserID() : string | undefined
     {
-        if(this._target instanceof DiscordJS.CommandInteraction)
+        if(this._target instanceof DiscordJS.ChatInputCommandInteraction)
             return this._target.user.id;
         else if(this._target instanceof DiscordJS.Message)
             return this._target.author.id;
@@ -417,7 +417,7 @@ export class Message
 
     async reply(sentence: string, deleteMessage: boolean) : Promise<DiscordJS.Snowflake | undefined>
     {
-        if(this._target instanceof DiscordJS.CommandInteraction)
+        if(this._target instanceof DiscordJS.ChatInputCommandInteraction)
         {
             return (await this._target.followUp({ephemeral: true, content: sentence})).id;
         }
@@ -426,7 +426,7 @@ export class Message
             if(deleteMessage)
             {
                 await this._target.delete();
-                await this._target.channel.send(sentence);
+                await (this._target as any).channel.send(sentence);
                 return undefined;
             }
             else
@@ -1044,7 +1044,6 @@ export class MusicPlayer
         async function createAudioStream(info: SongPlayInformation)
         {
             let mode = 2;
-            // 자체제작
             switch (mode)
             {
                 default:
@@ -1097,7 +1096,7 @@ export class MusicPlayer
                 // YTDL
                 {
                     const url = `${gYoutubeLink}?${gYoutubeLinkVideoIDKeyword}=${info._songInformation._id}`;
-                    const {default: YTDL} = await import(`ytdl-core`);
+                    const {default: YTDL} = await import('@distube/ytdl-core');
                     const stream = await YTDL(url, {
                         filter: "audioonly", 
                         quality: "highestaudio", 
@@ -1106,24 +1105,24 @@ export class MusicPlayer
                     const resource = createAudioResource(stream);
                     return resource;
                 }
-                case 3:
-                // play-dl
-                {
-                    const url = `${gYoutubeLink}?${gYoutubeLinkVideoIDKeyword}=${info._songInformation._id}`;
-                    const playDL = await import(`play-dl`);
-                    const stream = await playDL.stream(url, {
-                        quality: 0, 
-                        discordPlayerCompatibility: true
-                    });
+                // case 3:
+                // // play-dl
+                // {
+                //     const url = `${gYoutubeLink}?${gYoutubeLinkVideoIDKeyword}=${info._songInformation._id}`;
+                //     const playDL = await import(`play-dl`);
+                //     const stream = await playDL.stream(url, {
+                //         quality: 0, 
+                //         discordPlayerCompatibility: true
+                //     });
 
-                    const resource = createAudioResource(stream.stream, {inputType: stream.type});
-                    return resource;
-                }
+                //     const resource = createAudioResource(stream.stream, {inputType: stream.type});
+                //     return resource;
+                // }
             }
         }
 
         const resource = await createAudioStream(songPlayInfo);
-        //console.log(resource);
+        console.dir(resource, {depth: null, colors: true});
         this._connection.subscribe(this._player);
         this._player.play(resource);
 
@@ -1131,7 +1130,7 @@ export class MusicPlayer
 
         Logger.logDev(`--- Play: ${this._currentPlayingSongInformation._songInformation._title}`);
         const textChannel = this.getTextChannelByID(this._currentPlayingSongInformation._textChannelID);
-        textChannel?.send(`${this._currentPlayingSongInformation!._songInformation._title}(${this._currentPlayingSongInformation._songInformation.getSongDurationString()}) 노래를 재생합니다.`);
+        (textChannel as DiscordJS.TextChannel)?.send(`${this._currentPlayingSongInformation!._songInformation._title}(${this._currentPlayingSongInformation._songInformation.getSongDurationString()}) 노래를 재생합니다.`);
     }
 
     private async nextSong()
